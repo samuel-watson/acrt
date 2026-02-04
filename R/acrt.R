@@ -56,7 +56,6 @@ adaptive_crt_info <- function() {
   cat("Available design constructors:\n")
   cat("  parallel_crt()      - Parallel cluster trial\n")
   cat("  crossover_crt()     - Crossover cluster trial\n")
-  cat("  stepped_wedge_crt() - Stepped-wedge (rollout) trial\n\n")
   cat("Main functions:\n")
   cat("  adaptive_analysis() - Run analysis\n")
   cat("  find_pareto()       - Find Pareto frontier\n")
@@ -76,14 +75,6 @@ parallel <- parallel_crt
 #' @rdname crossover_crt
 #' @export
 crossover <- crossover_crt
-
-#' @rdname stepped_wedge_crt
-#' @export
-stepped_wedge <- stepped_wedge_crt
-
-#' @rdname stepped_wedge_crt
-#' @export
-rollout <- stepped_wedge_crt
 
 # =============================================================================
 # Startup Message

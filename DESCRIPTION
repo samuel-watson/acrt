@@ -21,7 +21,9 @@ Biarch: true
 Depends: 
     R (>= 3.5.0)
 Imports: 
-    glmmrBase (>= 1.1.0)
+    glmmrBase (>= 1.1.0),
+    Matrix,
+    ggplot2
 Collate:
   "adaptive_cluster_trial_v2.R"
   "design_spec.R" 

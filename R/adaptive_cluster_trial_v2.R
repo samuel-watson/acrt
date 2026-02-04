@@ -126,9 +126,23 @@ conditional_power_matrix <- function(z1_vec, model_summaries) {
   Z1 <- matrix(z1_vec, nz, ng)
   MU <- matrix(model_summaries$b1 * sqrt(model_summaries$I2_eff), nz, ng, byrow = TRUE)
 
-  upper <- (1.96 - W1 * Z1) / W2
-  lower <- (-1.96 - W1 * Z1) / W2
+  # Get degrees of freedom for each design (full data test)
+  # Falls back to z-distribution (df=Inf) if not provided
+  df_full <- model_summaries$df_full
+  if (is.null(df_full)) {
+    df_full <- rep(Inf, ng)
+  }
 
+  # Critical values - design specific
+  t_crit <- qt(0.975, df = df_full)
+  T_CRIT <- matrix(t_crit, nz, ng, byrow = TRUE)
+
+  # Thresholds for z2|1 to reject
+  upper <- (T_CRIT - W1 * Z1) / W2
+  lower <- (-T_CRIT - W1 * Z1) / W2
+
+  # Conditional power: P(z2|1 > upper) + P(z2|1 < lower)
+  # where z2|1 ~ N(mu2, 1) approximately
   pnorm(MU - upper) + pnorm(lower - MU)
 }
 
@@ -176,7 +190,6 @@ precompute_models <- function(design_grid, model_fn, fixed_params,
 #' @return Data frame with I2_eff, w1, w2, raw_cost, cost, b1, and any resource_vars
 summarise_models <- function(model_list, cost_fn, cost_params, lambda = 1,
                              resource_vars = NULL) {
-
   # Compute raw (unscaled) costs
   raw_costs <- sapply(model_list, function(d) do.call(cost_fn, c(list(d), cost_params)))
 
@@ -186,8 +199,10 @@ summarise_models <- function(model_list, cost_fn, cost_params, lambda = 1,
     w1 = sapply(model_list, function(d) d$w1),
     w2 = sapply(model_list, function(d) d$w2),
     raw_cost = raw_costs,
-    cost = lambda * raw_costs,  # Scaled cost for criterion
-    b1 = sapply(model_list, function(d) d$b1)
+    cost = lambda * raw_costs,
+    b1 = sapply(model_list, function(d) d$b1),
+    df_s1 = sapply(model_list, function(d) d$df_s1 %||% Inf),
+    df_full = sapply(model_list, function(d) d$df_full %||% Inf)
   )
 
   # Add resource variables if specified
@@ -214,20 +229,28 @@ summarise_models <- function(model_list, cost_fn, cost_params, lambda = 1,
 #' @param resource_vars Character vector of resource variable names to include in output
 #' @return Data frame with z1, optimal design index, cp, continue flag, and resources
 find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
-                                 resource_vars = NULL) {
+                                 resource_vars = NULL,
+                                 w1_ref = NULL) {
 
   cp_mat <- conditional_power_matrix(z1_vec, model_summaries)
   criterion_mat <- cp_mat - matrix(model_summaries$cost,
                                    nrow = length(z1_vec),
                                    ncol = nrow(design_grid),
                                    byrow = TRUE)
-
   best_idx <- max.col(criterion_mat)
   best_criterion <- criterion_mat[cbind(seq_along(z1_vec), best_idx)]
   best_cp <- cp_mat[cbind(seq_along(z1_vec), best_idx)]
 
-  # Efficacy stopping: |z1| > 1.96 means we reject now without stage 2
-  efficacy_stop <- abs(z1_vec) > 1.96
+  # Get w1 for efficacy boundary
+  # If not provided, use w1 from first design (they should all have same I1_eff)
+  if (is.null(w1_ref)) {
+    w1_ref <- model_summaries$w1[1]
+  }
+
+  # Efficacy stopping: weighted statistic exceeds threshold
+  # w1 * |z1| > 1.96  =>  |z1| > 1.96 / w1
+  efficacy_boundary <- 1.96 / w1_ref
+  efficacy_stop <- abs(z1_vec) > efficacy_boundary
 
   # Futility stopping: continuing isn't worth the cost
   futility_stop <- !efficacy_stop & best_criterion < 0
@@ -243,7 +266,9 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
     continue = continue,
     cp = ifelse(continue, best_cp, ifelse(efficacy_stop, 1, 0)),
     criterion = best_criterion,
-    design_idx = ifelse(continue, best_idx, NA)
+    design_idx = ifelse(continue, best_idx, NA),
+    w1_ref = w1_ref,
+    efficacy_boundary = efficacy_boundary
   )
 
   # Add all design grid columns for optimal designs
@@ -278,12 +303,13 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
 #' @param z1_range Integration range for z1 (default c(-4, 4))
 #' @param n_quad Number of quadrature points
 #' @return List with power components, probabilities, and expected resources
-compute_power_and_expectations <- function(design_grid, model_summaries, stage1_info,
+compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
                                            resource_vars = NULL,
-                                           z1_range = c(-4, 4), n_quad = 50) {
+                                           z1_range = c(-4, 4), n_quad = 50,
+                                           w1_ref = NULL) {
 
   b1 <- model_summaries$b1[1]
-  mu1 <- b1 * sqrt(stage1_info)
+  mu1 <- b1 * sqrt(I1_eff)
 
   gl <- statmod::gauss.quad(n_quad, kind = "legendre")
   z1_grid <- (gl$nodes + 1) / 2 * diff(z1_range) + z1_range[1]
@@ -293,7 +319,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, stage1_
   weights <- gl_weights * dens
 
   opt_designs <- find_optimal_designs(z1_grid, design_grid, model_summaries,
-                                      resource_vars)
+                                      resource_vars, w1_ref = w1_ref)
 
   # Stage 1 power: P(|z1| > 1.96) under H1
   power_stage1 <- pnorm(-1.96 - mu1) + (1 - pnorm(1.96 - mu1))
@@ -397,13 +423,32 @@ find_lambda_for_power <- function(target_power = 0.8,
 
   # Get stage 1 info
   I1_eff <- model_list[[1]]$I1_eff
+  I_eff <- model_list[[1]]$I_eff  # Full information
   b1 <- model_list[[1]]$b1
   mu1 <- b1 * sqrt(I1_eff)
 
-  # Stage 1 power is fixed (doesn't depend on lambda)
-  power_stage1 <- pnorm(-1.96 - mu1) + (1 - pnorm(1.96 - mu1))
+  # Compute w1 = sqrt(I1_eff / I_eff) - the weight for stage 1
+  w1_ref <- sqrt(I1_eff / I_eff)
 
-  if (verbose) cat(sprintf("Stage 1 power (fixed): %.4f\n", power_stage1))
+  # Degrees of freedom for stage 1
+  df_s1 <- model_list[[1]]$df_s1 %||% Inf
+
+  # Critical value for stage 1 (t-distribution)
+  t_crit_s1 <- qt(0.975, df = df_s1)
+
+  # Efficacy boundary: weighted statistic exceeds critical value
+  # w1 * |z1| > t_crit  =>  |z1| > t_crit / w1
+  efficacy_boundary <- t_crit_s1 / w1_ref
+
+  # Stage 1 power: P(|z1| > efficacy_boundary) under H1
+  # z1 ~ N(mu1, 1) under H1 (approximately)
+  power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
+
+  if (verbose) {
+    cat(sprintf("df_s1 = %.0f, t_crit = %.3f\n", df_s1, t_crit_s1))
+    cat(sprintf("w1 = %.4f, efficacy boundary |z1| > %.3f\n", w1_ref, efficacy_boundary))
+    cat(sprintf("Stage 1 power: %.4f\n", power_stage1))
+  }
 
   # Helper to build full results object
   build_results <- function(lambda, model_summaries, power_results) {
@@ -421,6 +466,11 @@ find_lambda_for_power <- function(target_power = 0.8,
         mu1 = mu1,
         b1 = b1,
         I1_eff = I1_eff,
+        I_eff = I_eff,
+        w1_ref = w1_ref,
+        df_s1 = df_s1,
+        t_crit_s1 = t_crit_s1,
+        efficacy_boundary = efficacy_boundary,
         lambda = lambda,
         cost_params = cost_params
       )
@@ -443,11 +493,12 @@ find_lambda_for_power <- function(target_power = 0.8,
   }
 
   # Function to compute power for a given lambda
+  # Function to compute power for a given lambda
   compute_for_lambda <- function(lambda) {
     model_summaries <- summarise_models(model_list, cost_fn, cost_params, lambda, resource_vars)
     power_results <- compute_power_and_expectations(
       design_grid, model_summaries, I1_eff, resource_vars,
-      z1_range, n_quad
+      z1_range, n_quad, w1_ref = w1_ref  # Pass w1_ref
     )
     list(
       power = power_results$power$total,

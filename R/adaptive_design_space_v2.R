@@ -2,15 +2,13 @@
 # Design Space Exploration - Generalised Version
 # =============================================================================
 
-library(ggplot2)
-
 # =============================================================================
 # Theme for Publication-Quality Plots
 # =============================================================================
 
 theme_publication <- function(base_size = 12, base_family = "") {
-  theme_minimal(base_size = base_size, base_family = base_family) %+replace%
-    theme(
+  ggplot2::theme_minimal(base_size = base_size, base_family = base_family) %+replace%
+    ggplot2::theme(
       panel.grid.major = element_line(colour = "grey90", linewidth = 0.3),
       panel.grid.minor = element_blank(),
       panel.background = element_rect(fill = "white", colour = NA),
@@ -116,6 +114,16 @@ explore_design_space <- function(stage1_grid,
       list(converged = FALSE, power = NA, lambda = NA,
            results = NULL, message = e$message)
     })
+
+    if (verbose && opt$converged) {
+      cat(sprintf("  w1_ref: %.4f, efficacy_boundary: %.3f\n",
+                  opt$results$params$w1_ref %||% NA,
+                  opt$results$params$efficacy_boundary %||% NA))
+
+      probs <- opt$results$probabilities
+      cat(sprintf("  P(efficacy)=%.3f, P(continue)=%.3f, P(futility)=%.3f\n",
+                  probs$efficacy_stop, probs$continue, probs$futility_stop))
+    }
 
     results_list[[i]] <<- opt
 
@@ -427,116 +435,81 @@ compute_pareto_ranks <- function(df, objectives, max_rank = NULL) {
 
 #' Plot Pareto frontier
 #'
-#' @param pareto_df Output from find_constrained_pareto
-#' @param all_designs Optional data frame of all designs (for showing dominated points)
-#' @param label_var Variable to use for point labels
-#' @param show_frontier_line Show step line connecting frontier points
-#' @return ggplot object
-plot_pareto <- function(pareto_df,
-                        all_designs = NULL,
-                        label_var = NULL,
-                        show_frontier_line = TRUE) {
+#' @param pareto Data frame of Pareto-optimal designs
+#' @param all_designs Optional data frame of all designs to show dominated points
+#' @param objectives Named list of objectives used (for axis labels)
+#' @param ... Additional arguments
+plot_pareto <- function(pareto, all_designs = NULL, objectives = NULL, ...) {
 
-  obj_list <- attr(pareto_df, "objectives")
 
-  if (is.null(obj_list)) {
-    stop("No 'objectives' attribute found. Ensure pareto_df comes from find_constrained_pareto().")
+  # Determine which objectives to plot
+  if (is.null(objectives)) {
+    objectives <- list(E_N = "min", N_max = "min")
   }
 
-  if (length(obj_list) < 2) {
-    stop(sprintf("Need at least 2 objectives for plotting, found %d", length(obj_list)))
+  obj_names <- names(objectives)
+  if (length(obj_names) < 2) {
+    stop("Need at least 2 objectives for Pareto plot")
   }
-
-  obj_names <- names(obj_list)[1:2]
-  obj_directions <- unlist(obj_list)[1:2]
 
   x_var <- obj_names[1]
   y_var <- obj_names[2]
 
+  # Check variables exist
+  if (!x_var %in% names(pareto) || !y_var %in% names(pareto)) {
+    stop("Objective variables not found in data: ", x_var, ", ", y_var)
+  }
+
+  # Clean axis labels
+  x_label <- gsub("_", " ", x_var)
+  y_label <- gsub("_", " ", y_var)
+
   p <- ggplot()
 
-  # Show dominated designs if provided
-  if (!is.null(all_designs)) {
-    if (nrow(pareto_df) > 0 && all(c(x_var, y_var) %in% names(all_designs))) {
-      all_designs$.on_frontier <- interaction(all_designs[[x_var]], all_designs[[y_var]]) %in%
-        interaction(pareto_df[[x_var]], pareto_df[[y_var]])
-
-      dominated_designs <- all_designs[!all_designs$.on_frontier, ]
-
-      if (nrow(dominated_designs) > 0) {
-        p <- p +
-          geom_point(data = dominated_designs,
-                     aes(x = .data[[x_var]], y = .data[[y_var]]),
-                     colour = "grey70", size = 2, alpha = 0.5)
+  # Plot all designs as background if provided
+  if (!is.null(all_designs) && nrow(all_designs) > 0) {
+    # Mark which are Pareto-optimal
+    all_designs$pareto_optimal <- FALSE
+    for (i in seq_len(nrow(pareto))) {
+      match_idx <- which(
+        abs(all_designs[[x_var]] - pareto[[x_var]][i]) < 1e-6 &
+          abs(all_designs[[y_var]] - pareto[[y_var]][i]) < 1e-6
+      )
+      if (length(match_idx) > 0) {
+        all_designs$pareto_optimal[match_idx] <- TRUE
       }
     }
-  }
-
-  # Pareto frontier line
-  if (show_frontier_line && nrow(pareto_df) > 1) {
-    pareto_sorted <- pareto_df[order(pareto_df[[x_var]]), ]
 
     p <- p +
-      geom_step(data = pareto_sorted,
-                aes(x = .data[[x_var]], y = .data[[y_var]]),
-                colour = "#264653", linewidth = 0.8, alpha = 0.6,
-                direction = "vh")
+      geom_point(data = all_designs[!all_designs$pareto_optimal, ],
+                 aes(x = .data[[x_var]], y = .data[[y_var]]),
+                 colour = "grey70", size = 2, alpha = 0.5)
   }
 
-  # Pareto points
+  # Plot Pareto frontier
+  pareto_sorted <- pareto[order(pareto[[x_var]]), ]
+
   p <- p +
-    geom_point(data = pareto_df,
+    geom_step(data = pareto_sorted,
+              aes(x = .data[[x_var]], y = .data[[y_var]]),
+              colour = "#2a9d8f", linewidth = 0.8, alpha = 0.7) +
+    geom_point(data = pareto_sorted,
                aes(x = .data[[x_var]], y = .data[[y_var]]),
-               fill = "#2a9d8f", colour = "white",
-               shape = 21, size = 4, stroke = 0.8)
-
-  # Labels if requested
-  if (!is.null(label_var) && label_var %in% names(pareto_df)) {
-    if (requireNamespace("ggrepel", quietly = TRUE)) {
-      p <- p +
-        ggrepel::geom_text_repel(
-          data = pareto_df,
-          aes(x = .data[[x_var]], y = .data[[y_var]],
-              label = .data[[label_var]]),
-          size = 3, colour = "grey30",
-          segment.colour = "grey70", segment.size = 0.3
-        )
-    } else {
-      p <- p +
-        geom_text(data = pareto_df,
-                  aes(x = .data[[x_var]], y = .data[[y_var]],
-                      label = .data[[label_var]]),
-                  hjust = -0.2, vjust = -0.2, size = 3, colour = "grey30")
-    }
-  }
-
-  # Axis labels with direction indicators
-  make_axis_label <- function(var_name, direction) {
-    display_name <- gsub("_", " ", var_name)
-    dir_label <- if (direction == "min") "minimise" else "maximise"
-    sprintf("%s (%s)", display_name, dir_label)
-  }
-
-  x_label <- make_axis_label(x_var, obj_directions[1])
-  y_label <- make_axis_label(y_var, obj_directions[2])
-
-  n_designs <- nrow(pareto_df)
-  subtitle <- if (n_designs == 1) {
-    "Single optimal design"
-  } else {
-    sprintf("%d non-dominated designs", n_designs)
-  }
-
-  p <- p +
+               colour = "#2a9d8f", size = 3) +
     scale_x_continuous(labels = scales::comma) +
     scale_y_continuous(labels = scales::comma) +
     labs(
       x = x_label,
       y = y_label,
-      title = "Pareto frontier",
-      subtitle = subtitle
+      title = "Pareto Frontier",
+      subtitle = sprintf("Optimising: %s", paste(names(objectives), collapse = " vs "))
     ) +
-    theme_publication()
+    theme_minimal(base_size = 11) +
+    theme(
+      plot.title = element_text(face = "bold", size = 13),
+      plot.subtitle = element_text(colour = "grey40", size = 9),
+      panel.grid.minor = element_blank()
+    )
 
   p
 }

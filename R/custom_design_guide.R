@@ -30,14 +30,14 @@
 # =============================================================================
 
 #' Create a custom CRT design (copy and modify this template)
-#' 
+#'
 #' @example
 #' # 1. Define your model builder (see detailed docs below)
 #' my_model_builder <- function(design_params, fixed_params) {
 #'   # ... your code here ...
 #'   list(I1_eff=..., I2_eff=..., I_eff=..., w1=..., w2=..., b1=...)
 #' }
-#' 
+#'
 #' # 2. Create design specification
 #' my_spec <- crt_design_spec(
 #'   stage1_params = c("k1", "m1"),
@@ -51,7 +51,7 @@
 #'   model_builder = my_model_builder,
 #'   design_type = "my_custom_type"
 #' )
-#' 
+#'
 #' # 3. Create design object
 #' my_design <- structure(
 #'   list(
@@ -63,7 +63,7 @@
 #'   ),
 #'   class = c("my_custom_crt", "crt_design")
 #' )
-#' 
+#'
 #' # 4. Analyse
 #' results <- adaptive_analysis(my_design, target_power = 0.8)
 
@@ -187,7 +187,7 @@
 #   library(Matrix)
 #   Z_sp <- Matrix(Z, sparse = TRUE)
 #   D_sp <- Matrix(D, sparse = TRUE)
-#   
+#
 #   # Marginal covariance: V = sigma^2 * I + Z D Z'
 #   S <- Diagonal(x = 1/cache$mod$w_matrix()) + Z_sp %*% tcrossprod(D_sp, Z_sp)
 #   V <- as.matrix(S)
@@ -243,19 +243,19 @@
 # -----------------------------------------------------------------------------
 #
 # 1. COST FUNCTION (auto-generated):
-#    
+#
 #    cost = sum(resource_qty * weight)
-#    
+#
 #    Default weights:
 #      - n (observations): weight = 1
 #      - clusters: weight = rho
 #      - periods: weight = rho
-#    
+#
 #    For lambda-calibration, only stage 2 resources are counted
 #    For fixed comparison, all resources are counted
 #
 # 2. SAMPLE SIZE FUNCTION (auto-generated):
-#    
+#
 #    n_stage1 = eval(n_s1 formula)
 #    n_stage2 = eval(n_s2 formula)  # Only if continuing
 #    n_total = n_stage1 + n_stage2
@@ -319,10 +319,10 @@
 #   my_cost_fn <- function(model_output, rho) {
 #     # Observations cost 1 each
 #     n_cost <- model_output$n2
-#     
+#
 #     # Clusters cost rho each
 #     k_cost <- 2 * model_output$k2  # 2 arms
-#     
+#
 #     # Return total stage 2 cost
 #     n_cost + rho * k_cost
 #   }
@@ -386,32 +386,32 @@
 # -----------------------------------------------------------------------------
 #
 #   my_sample_size_fn <- function(opt_designs, results, rho = 30) {
-#     
+#
 #     # Get stage 1 parameters
 #     model1 <- results$models$list[[1]]
 #     k1 <- model1$k1
 #     m1 <- model1$m1
 #     n_arms <- 2
-#     
+#
 #     # Stage 1 sample size (fixed)
 #     n_stage1 <- n_arms * k1 * m1
-#     
+#
 #     # Stage 2 sample sizes (vector, one per z1)
 #     m2 <- ifelse(is.na(opt_designs$m2), 0, opt_designs$m2)
 #     k2 <- ifelse(is.na(opt_designs$k2), 0, opt_designs$k2)
-#     
+#
 #     n_stage2 <- ifelse(
 #       opt_designs$continue,
 #       n_arms * k1 * m2 + n_arms * k2 * m2,
 #       0
 #     )
-#     
+#
 #     # Maximum from design grid
 #     grid <- results$models$design_grid
 #     max_m2 <- max(grid$m2)
 #     max_k2 <- max(grid$k2)
 #     n_stage2_max <- n_arms * k1 * max_m2 + n_arms * max_k2 * max_m2
-#     
+#
 #     # Cost calculations
 #     cost_stage1 <- n_stage1 + rho * (n_arms * k1)
 #     cost_stage2 <- ifelse(
@@ -419,12 +419,12 @@
 #       (n_arms * k1 * m2 + n_arms * k2 * m2) + rho * (n_arms * k2),
 #       0
 #     )
-#     
+#
 #     # Expected cost (using quadrature weights)
 #     weights <- results$quadrature$weights
 #     E_cost <- cost_stage1 + sum(cost_stage2 * weights)
 #     max_cost <- cost_stage1 + n_stage2_max + rho * (n_arms * max_k2)
-#     
+#
 #     list(
 #       n_stage1 = n_stage1,
 #       n_stage2 = n_stage2,
@@ -447,7 +447,7 @@
 # extend enrollment in stage 2.
 
 staggered_enrollment_example <- function() {
-  
+
   cat("
 ================================================================================
 EXAMPLE: Staggered Enrollment Design
@@ -465,13 +465,13 @@ Parameters:
   - Stage 2 (adaptive): t2 (additional periods), r2 (enrollment rate)
 
 ")
-  
+
   # -------------------------------------------------------------------------
   # Step 1: Write the model builder
   # -------------------------------------------------------------------------
-  
+
   staggered_model_builder <- function(design_params, fixed_params) {
-    
+
     # Extract parameters
     K <- fixed_params$K
     t1 <- fixed_params$t1
@@ -483,13 +483,13 @@ Parameters:
     cac <- fixed_params$cac %||% 0.8
     delta <- fixed_params$delta
     cache <- fixed_params$cache
-    
+
     T_total <- t1 + t2
-    
+
     # Calculate enrollment times
     enroll_time <- numeric(K)
     enrolled <- 0
-    
+
     for (t in 1:t1) {
       n_new <- min(r1, K - enrolled)
       if (n_new > 0) {
@@ -497,7 +497,7 @@ Parameters:
         enrolled <- enrolled + n_new
       }
     }
-    
+
     if (t2 > 0 && enrolled < K) {
       for (t in (t1 + 1):T_total) {
         n_new <- min(r2, K - enrolled)
@@ -508,10 +508,10 @@ Parameters:
         if (enrolled >= K) break
       }
     }
-    
+
     # Clusters not enrolled get time > T_total (won't be observed)
     enroll_time[enroll_time == 0] <- T_total + 1
-    
+
     # Build data: each cluster observed once at enrollment time
     # Treatment is randomized at enrollment
     df <- data.frame(
@@ -521,18 +521,18 @@ Parameters:
     )
     df <- df[df$t <= T_total, ]  # Only enrolled clusters
     df$n <- m
-    
+
     # Stage indices
     idx1 <- which(df$t <= t1)
     idx2 <- which(df$t > t1)
-    
+
     n1 <- length(idx1)
     n2 <- length(idx2)
-    
+
     # Build model
     v1 <- icc
     cache_key <- paste(K, T_total, r2, sep = "_")
-    
+
     if (is.null(cache$mod) || cache$cache_key != cache_key) {
       cache$mod <- Model$new(
         ~ trt + (1|gr(cl)),
@@ -547,21 +547,21 @@ Parameters:
     } else {
       glmmrBase:::Model__set_weights(cache$mod$.__enclos_env__$private$ptr, df$n)
     }
-    
+
     # Compute V
     X <- cache$mod$mean$X
     Z <- cache$mod$covariance$Z
     D <- cache$mod$covariance$D
-    
+
     Z_sp <- Matrix::Matrix(Z, sparse = TRUE)
     D_sp <- Matrix::Matrix(D, sparse = TRUE)
-    S <- Matrix::Diagonal(x = 1/cache$mod$w_matrix()) + 
+    S <- Matrix::Diagonal(x = 1/cache$mod$w_matrix()) +
       Z_sp %*% Matrix::tcrossprod(D_sp, Z_sp)
     V <- as.matrix(S)
-    
+
     # Efficient score decomposition
     eff <- efficient_score_decomposition(X, V, idx1, idx2, j = 2)
-    
+
     list(
       # Required
       I1_eff = eff$I1_eff,
@@ -579,11 +579,11 @@ Parameters:
       T_total = T_total
     )
   }
-  
+
   # -------------------------------------------------------------------------
   # Step 2: Create design specification
   # -------------------------------------------------------------------------
-  
+
   staggered_spec <- crt_design_spec(
     stage1_params = c("K", "t1", "r1", "m"),
     stage2_params = c("t2", "r2"),
@@ -603,11 +603,11 @@ Parameters:
     n_arms = 1,  # Not really arms in this design
     design_type = "staggered_enrollment"
   )
-  
+
   # -------------------------------------------------------------------------
   # Step 3: Create design object
   # -------------------------------------------------------------------------
-  
+
   staggered_design <- structure(
     list(
       spec = staggered_spec,
@@ -620,7 +620,7 @@ Parameters:
     ),
     class = c("staggered_crt", "crt_design")
   )
-  
+
   cat("
 Design object created. To analyse:
 
@@ -629,7 +629,7 @@ Design object created. To analyse:
   plot(results, type = 'decision')
 
 ")
-  
+
   invisible(staggered_design)
 }
 
@@ -639,12 +639,12 @@ Design object created. To analyse:
 # =============================================================================
 
 #' Print help on custom design creation
-#' 
-#' @param topic Optional topic: "model_builder", "resources", "cost_fn", 
+#'
+#' @param topic Optional topic: "model_builder", "resources", "cost_fn",
 #'        "sample_size_fn", "example", or NULL for overview
 #' @export
 custom_design_help <- function(topic = NULL) {
-  
+
   if (is.null(topic)) {
     cat("
 ================================================================================
@@ -680,7 +680,7 @@ BASIC TEMPLATE:
     # ... compute efficient information ...
     list(I1_eff=..., I2_eff=..., I_eff=..., w1=..., w2=..., b1=...)
   }
-  
+
   # 2. Create specification
   my_spec <- crt_design_spec(
     stage1_params = c('k1', 'm1'),
@@ -693,7 +693,7 @@ BASIC TEMPLATE:
     ),
     model_builder = my_model
   )
-  
+
   # 3. Create design object
   my_design <- structure(list(
     spec = my_spec,
@@ -702,7 +702,7 @@ BASIC TEMPLATE:
     stage2_grid_fn = function(s1) expand.grid(m2 = 10:50, k2 = 0:4),
     rho = 30
   ), class = c('my_crt', 'crt_design'))
-  
+
   # 4. Analyse
   results <- adaptive_analysis(my_design, target_power = 0.8)
 
@@ -723,7 +723,7 @@ INPUTS:
   design_params: Single-row data.frame with stage 2 parameters
     - Example: data.frame(m2 = 30, k2 = 2)
     - Access as: design_params$m2
-  
+
   fixed_params: List containing:
     - Stage 1 parameters (k1, m1, etc. - merged from stage1_grid)
     - Constants (icc, cac, delta)
@@ -733,7 +733,7 @@ INPUTS:
 REQUIRED OUTPUTS:
 -----------------
   Return a list with:
-  
+
     I1_eff  : Stage 1 efficient information (scalar)
     I2_eff  : Stage 2 efficient information (scalar)
     I_eff   : Total efficient information (scalar)
@@ -745,13 +745,14 @@ OPTIONAL OUTPUTS (for resource tracking):
 -----------------------------------------
     n1, n2        : Observations per stage
     k1, k2, m1, m2: Design parameters
+    df_s1, df_full: Degrees of freedom for t-distribution
     ... any quantities needed by cost/sample size functions
 
 COMPUTING EFFICIENT INFORMATION:
 --------------------------------
   # Use the helper function:
   eff <- efficient_score_decomposition(X, V, idx1, idx2, j = j_treatment)
-  
+
   # Where:
   #   X = fixed effects design matrix
   #   V = marginal covariance matrix
@@ -763,7 +764,7 @@ CACHING (CRITICAL FOR SPEED):
 -----------------------------
   cache <- fixed_params$cache
   cache_key <- paste(k1, k2, sep = '_')
-  
+
   if (is.null(cache$mod) || cache$cache_key != cache_key) {
     cache$mod <- Model$new(...)
     cache$cache_key <- cache_key
@@ -786,7 +787,7 @@ counts. They're used to auto-generate cost and sample size functions.
 NAMING CONVENTION:
 ------------------
   {type}_{stage}
-  
+
   Examples:
     n_s1        : Observations in stage 1
     n_s2        : Observations in stage 2
@@ -797,7 +798,7 @@ NAMING CONVENTION:
 SYNTAX:
 -------
   Use R formula notation with ~ on the left:
-  
+
   resources = list(
     n_s1        = ~ n_arms * k1 * m1,
     n_s2        = ~ n_arms * k1 * m2 + n_arms * k2 * m2,
@@ -819,11 +820,11 @@ COST STRUCTURE:
     weights = c(n = 1, clusters = 'rho', periods = 'rho'),
     stage2_resources = c('n_s2', 'clusters_s2')
   )
-  
+
   - weights: Maps resource types to cost multipliers
     - Numeric: used directly
     - Character: looked up as variable (e.g., 'rho')
-  
+
   - stage2_resources: Which resources count for lambda-calibration
     - Only these are used in the CP - lambda*cost criterion
 
@@ -846,13 +847,13 @@ INPUTS:
   model_output: List returned by your model_builder
     - Contains all fields you included (n1, n2, k1, k2, etc.)
     - Access as: model_output$n2
-  
+
   rho: Cost ratio from design$rho
 
 OUTPUT:
 -------
   Return scalar: STAGE 2 cost only (not total)
-  
+
   Used in criterion: CP(z1) - lambda * cost
 
 EXAMPLE:
@@ -885,7 +886,7 @@ INPUTS:
       - continue: TRUE if continuing to stage 2
       - efficacy_stop, futility_stop: Early stopping indicators
       - All stage 2 parameters (NA when not continuing)
-  
+
   results: Full results object
     Key paths:
       - results$models$list[[1]]: First model (has stage 1 params)
@@ -908,7 +909,7 @@ OPTIONAL OUTPUT:
     max_cost = ...,
     E_clusters = ...
   )
-  
+
   These appear in the summary table.
 
 ================================================================================
@@ -919,6 +920,6 @@ OPTIONAL OUTPUT:
     cat("Unknown topic:", topic, "\n")
     cat("Available topics: model_builder, resources, cost_fn, sample_size_fn, example\n")
   }
-  
+
   invisible(NULL)
 }

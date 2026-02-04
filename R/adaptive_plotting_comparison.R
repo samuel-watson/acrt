@@ -22,7 +22,7 @@ plot_decision_rules <- function(results,
                                 show_density = TRUE,
                                 title = NULL) {
 
-  library(ggplot2)
+
 
   # === Extract results from various input formats ===
   raw <- extract_raw_results(results, design_index)
@@ -75,7 +75,23 @@ plot_decision_rules <- function(results,
   }
 
   # Overall power
-  total_power <- sum(plot_data$p_reject * (weights %||% (plot_data$density_h1 / sum(plot_data$density_h1))))
+  # === Get stored power and probabilities ===
+  total_power <- raw$power
+  if (is.list(total_power)) {
+    total_power <- total_power$total %||% total_power[[1]]
+  }
+
+  probs <- raw$probabilities
+  p_efficacy <- probs$efficacy_stop
+  if (length(p_efficacy) > 1) p_efficacy <- p_efficacy[1]
+  p_futility <- probs$futility_stop
+  if (length(p_futility) > 1) p_futility <- p_futility[1]
+  p_continue <- probs$continue
+  if (length(p_continue) > 1) p_continue <- p_continue[1]
+
+  # Get efficacy boundary info for display
+  w1_ref <- raw$params$w1_ref %||% NULL
+  efficacy_boundary <- raw$params$efficacy_boundary %||% NULL
 
   # === Colour palette ===
   palette <- c(
@@ -152,7 +168,8 @@ find_decision_boundaries <- function(plot_data) {
 #' @keywords internal
 plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
                                 p_efficacy, p_futility, p_continue,
-                                total_power, show_density, title) {
+                                total_power, show_density, title,
+                                w1_ref = NULL, efficacy_boundary = NULL) {
 
   # Scale density to 0-1 range
   plot_data$density_scaled <- plot_data$density_h1 / max(plot_data$density_h1)
@@ -225,10 +242,15 @@ plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
   }
 
   # Add overall probabilities to subtitle instead
+  # Build subtitle
   subtitle <- sprintf(
-    "Overall power: %.1f%%   |   P(efficacy): %.0f%%   P(continue): %.0f%%   P(futility): %.0f%%",
-    total_power * 100, p_efficacy * 100, p_continue * 100, p_futility * 100
+    "Overall power: %.1f%%   |   μ₁ = %.2f",
+    total_power * 100, mu1
   )
+
+  if (!is.null(efficacy_boundary)) {
+    subtitle <- paste0(subtitle, sprintf("   |   Efficacy: |z₁| > %.2f", efficacy_boundary))
+  }
 
   p +
     scale_y_continuous(
@@ -346,7 +368,7 @@ plot_decision_rules_compact <- function(results,
                                         design_index = 1,
                                         title = NULL) {
 
-  library(ggplot2)
+
 
   raw <- extract_raw_results(results, design_index)
 
@@ -505,7 +527,7 @@ plot_sample_size <- function(ss, type = c("histogram", "cumulative", "both"),
                              show_outcomes = TRUE) {
 
   type <- match.arg(type)
-  library(ggplot2)
+
 
   # Handle compare_sample_sizes output
   if ("comparison" %in% names(ss)) {
@@ -597,7 +619,7 @@ plot_sample_size <- function(ss, type = c("histogram", "cumulative", "both"),
 
 #' Plot sample size comparison (H0 vs H1)
 plot_sample_size_comparison <- function(ss_compare, type, show_outcomes) {
-  library(ggplot2)
+
 
   dist_h1 <- ss_compare$H1$distribution
   dist_h0 <- ss_compare$H0$distribution
@@ -711,7 +733,7 @@ plot_design_space <- function(exploration,
                               group_var = NULL) {
 
   type <- match.arg(type)
-  library(ggplot2)
+
 
   df <- exploration$summary
   stage1_vars <- names(exploration$params$stage1_grid)
@@ -872,7 +894,7 @@ plot_design_heatmap <- function(exploration,
                                 z_var = "E_N",
                                 x_var = NULL,
                                 y_var = NULL) {
-  library(ggplot2)
+
 
   df <- exploration$summary
   stage1_vars <- names(exploration$params$stage1_grid)
@@ -1347,7 +1369,7 @@ plot_fixed_comparison <- function(comparison,
                                   type = c("cost_ratio", "savings", "frontier", "all")) {
 
   type <- match.arg(type)
-  library(ggplot2)
+
 
   df <- comparison$comparison
   fixed_cost <- comparison$fixed$optimal$cost

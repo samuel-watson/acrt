@@ -110,6 +110,9 @@ sw_model_builder <- function(design_params, fixed_params) {
 
   eff_decomp <- efficient_score_decomposition(X, V, idx1, idx2, j = j_trt)
 
+  df_s1 <- t1 * k - t1 - 1
+  df_full <- (t1 + t2) * k - t1 - t2 - 1
+
   list(
     I1_eff = eff_decomp$I1_eff,
     I2_eff = eff_decomp$I2_eff,
@@ -125,7 +128,9 @@ sw_model_builder <- function(design_params, fixed_params) {
     t1 = t1,
     t2 = t2,
     r = r,
-    T_total = T_total
+    T_total = T_total,
+    df_s1 = df_s1,
+    df_full = df_full
   )
 }
 

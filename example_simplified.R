@@ -26,7 +26,7 @@ design <- parallel_crt(
 )
 
 # Run the analysis - ONE function call
-results <- adaptive_analysis(design, target_power = 0.8, verbose = TRUE)
+results <- adaptive_analysis(design, target_power = 0.8, verbose = TRUE, tol = 0.01)
 
 # View summary
 summary(results)
@@ -34,7 +34,7 @@ summary(results)
 # Plot results
 plot(results, type = "EN")      # Expected sample size
 plot(results, type = "Nmax")    # Maximum sample size
-plot(results, type = "pareto")  # Pareto frontier
+plot(results, type = "pareto", objectives = list(E_cost = "min", max_cost = "min") )  # Pareto frontier
 
 # =============================================================================
 # Example 2: Single Design Analysis
@@ -46,14 +46,14 @@ cat("\n=== Example 2: Single Design Analysis ===\n\n")
 design_single <- parallel_crt(
   icc = 0.05,
   delta = 0.25,
-  k1 = 14,    # Single value
-  m1 = 15,    # Single value
-  k2 = 0:6,
+  k1 = 12,    # Single value
+  m1 = 10,    # Single value
+  k2 = 0:10,
   rho = 30
 )
 
 # Analyse
-results_single <- adaptive_analysis(design_single, target_power = 0.8)
+results_single <- adaptive_analysis(design_single, target_power = 0.8, tol = 0.01)
 
 # Summary shows more detail for single designs
 summary(results_single)
@@ -72,7 +72,7 @@ print(rules[seq(1, nrow(rules), by = 5), c("z1", "continue", "cp", "m2", "k2")])
 cat("\n=== Example 3: Pareto Frontier ===\n\n")
 
 # Find Pareto-optimal designs (minimise E[N] and N_max)
-pareto <- find_pareto(results, objectives = list(E_N = "min", N_max = "min"))
+pareto <- find_pareto(results, objectives = list(E_cost = "min", max_cost = "min"))
 print(pareto[, c("k1", "m1", "E_N", "N_max", "power_stage1")])
 
 # Different objectives: minimise cost, maximise early stopping
@@ -100,6 +100,7 @@ print(comparison)
 # Plot comparison
 plot(comparison, type = "savings")
 plot(comparison, type = "frontier")
+plot(comparison, type = "cost_ratio")
 
 # =============================================================================
 # Example 5: Stepped-Wedge Design
