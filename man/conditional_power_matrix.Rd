@@ -2,7 +2,14 @@
 % Please edit documentation in R/adaptive_cluster_trial_v2.R
 \name{conditional_power_matrix}
 \alias{conditional_power_matrix}
-\title{Vectorised conditional power over z1 and design grid}
+\title{Model functions must return a list with at minimum:
+\itemize{
+\item I1_eff: Stage 1 efficient information (scalar)
+\item I2_eff: Stage 2 conditional efficient information (scalar)
+\item I_eff: Total efficient information (scalar)
+\item w1, w2: Combination weights
+\item b1: Treatment effect (delta) for power calculations
+}}
 \usage{
 conditional_power_matrix(z1_vec, model_summaries)
 }
@@ -15,5 +22,26 @@ conditional_power_matrix(z1_vec, model_summaries)
 Matrix: rows = z1 values, cols = designs
 }
 \description{
+Additional fields can be included for:
+\itemize{
+\item Resource tracking (n1, n2, k1, k2, etc.)
+\item Cost calculation (any fields used by cost_fn)
+\item Sample size computation (any fields used by sample_size_fn)
+}
+}
+\details{
+The function signature should be: function(design_params, fixed_params)
+where design_params is a single row from the design grid.
+#' Conditional power (two-sided)
+#' @param z1 Stage 1 z-statistic
+#' @param I2_eff Stage 2 conditional efficient information
+#' @param w1, w2 Combination weights
+#' @param delta Effect size on linear predictor scale
+conditional_power <- function(z1, I2_eff, w1, w2, delta) {
+mu <- delta * sqrt(I2_eff)
+upper_thresh <- (1.96 - w1 * z1) / w2
+lower_thresh <- (-1.96 - w1 * z1) / w2
+pnorm(mu - upper_thresh) + pnorm(lower_thresh - mu)
+}
 Vectorised conditional power over z1 and design grid
 }

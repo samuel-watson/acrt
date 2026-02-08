@@ -3,13 +3,15 @@
 \name{parallel_crt}
 \alias{parallel_crt}
 \alias{parallel}
-\title{Create parallel CRT design specification}
+\title{Create a parallel cluster randomised trial design}
 \usage{
 parallel_crt(
   icc,
   delta,
   k1,
   m1,
+  k2 = 0:4,
+  m2 = NULL,
   rho = 1,
   cac = 0.8,
   family = "gaussian",
@@ -21,6 +23,8 @@ parallel(
   delta,
   k1,
   m1,
+  k2 = 0:4,
+  m2 = NULL,
   rho = 1,
   cac = 0.8,
   family = "gaussian",
@@ -28,7 +32,7 @@ parallel(
 )
 }
 \arguments{
-\item{icc}{Intra-cluster correlation}
+\item{icc}{Intra-cluster correlation coefficient}
 
 \item{delta}{Treatment effect (on natural scale)}
 
@@ -36,7 +40,11 @@ parallel(
 
 \item{m1}{Stage 1 individuals per cluster (scalar or vector)}
 
-\item{rho}{Cost ratio (cluster vs individual)}
+\item{k2}{Stage 2 new clusters per arm (vector, default 0:4)}
+
+\item{m2}{Stage 2 individuals per cluster (vector or function, default based on m1)}
+
+\item{rho}{Ratio of cluster cost to individual cost}
 
 \item{cac}{Cluster autocorrelation (default 0.8)}
 
@@ -48,5 +56,6 @@ parallel(
 A crt_design object
 }
 \description{
-Create parallel CRT design specification
+Two-arm parallel design where clusters are randomised to treatment or control.
+Stage 2 can add more observations and/or clusters.
 }

@@ -11,7 +11,10 @@ compute_power_and_expectations(
   resource_vars = NULL,
   z1_range = c(-4, 4),
   n_quad = 50,
-  w1_ref = NULL
+  w1_ref = NULL,
+  df_s1 = Inf,
+  df_full = Inf,
+  cost_cap = NULL
 )
 }
 \arguments{

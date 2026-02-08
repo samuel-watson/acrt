@@ -12,6 +12,7 @@ find_lambda_for_power(
   cost_fn,
   cost_params = list(rho = 25),
   resource_vars = NULL,
+  method = c("lambda", "cost_cap"),
   lambda_range = c(1e-08, 1),
   tol = 0.001,
   max_iter = 50,

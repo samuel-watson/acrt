@@ -382,6 +382,7 @@ parallel_model_builder <- function(design_params, fixed_params) {
     k1 = k1,
     k2 = k2,
     df_s1 = df_s1,
+    df_s2 = 2 * k2 - 2,
     df_full = df_full,
     family = family,
     link = glm_params$link
@@ -466,6 +467,7 @@ fixed_parallel_model_builder <- function(design_params, fixed_params) {
   # Full information
   V_inv_X <- solve(V, X)
   I_full <- crossprod(X, V_inv_X)
+  df_full <- 2 * k - 2
 
   # Treatment is column 2
   j_trt <- 2
@@ -480,6 +482,7 @@ fixed_parallel_model_builder <- function(design_params, fixed_params) {
     b1_original = glm_params$b1_original,
     k = k,
     m = m,
+    df_full = df_full,
     n_total = n_total,
     family = family,
     link = glm_params$link

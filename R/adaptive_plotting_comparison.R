@@ -325,8 +325,7 @@ create_design_plots <- function(plot_data, design_vars, boundaries, palette) {
 
   design_plots <- lapply(design_vars, function(var) {
     if (!var %in% names(plot_data)) return(NULL)
-
-    df_var <- plot_data[plot_data$outcome == "Continue", ]
+    df_var <- plot_data[plot_data$outcome == "Continue" | plot_data$outcome == "Futility", ]
     if (nrow(df_var) == 0) return(NULL)
     if (all(is.na(df_var[[var]]))) return(NULL)
 
@@ -734,16 +733,29 @@ plot_design_space <- function(exploration,
 
   type <- match.arg(type)
 
-
   df <- exploration$summary
   stage1_vars <- names(exploration$params$stage1_grid)
 
-  # Default group variable
+  # Split by convergence if column exists
+  has_convergence <- "converged" %in% names(df)
+  if (has_convergence) {
+    df_conv <- df[df$converged, ]
+    df_fail <- df[!df$converged, ]
+    has_failures <- nrow(df_fail) > 0
+  } else {
+    df_conv <- df
+    df_fail <- df[0, ]
+    has_failures <- FALSE
+  }
 
+  # Default group variable
   if (is.null(group_var)) group_var <- stage1_vars[1]
 
-  df[[group_var]] <- factor(df[[group_var]])
-  n_groups <- length(unique(df[[group_var]]))
+  all_levels <- sort(unique(df[[group_var]]))
+  df_conv[[group_var]] <- factor(df_conv[[group_var]], levels = all_levels)
+  df_fail[[group_var]] <- factor(df_fail[[group_var]], levels = all_levels)
+
+  n_groups <- length(all_levels)
 
   palette_groups <- c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51")[1:min(n_groups, 5)]
   if (n_groups > 5) palette_groups <- viridis::viridis(n_groups)
@@ -755,14 +767,26 @@ plot_design_space <- function(exploration,
   # Label variable (second stage1 var if exists)
   label_var <- if (length(stage1_vars) > 1) stage1_vars[2] else NULL
 
+  # Helper to add non-converged point layer
+  add_fail_layer <- function(p, x_v, y_var) {
+    if (has_failures && y_var %in% names(df_fail)) {
+      p <- p +
+        geom_point(data = df_fail,
+                   aes(x = .data[[x_v]], y = .data[[y_var]]),
+                   colour = "grey45", shape = 4, size = 2.5, stroke = 0.8,
+                   inherit.aes = FALSE)
+    }
+    p
+  }
+
   # Common plot elements
   make_base_plot <- function(y_var, y_label, title, subtitle = NULL) {
-    p <- ggplot(df, aes(x = .data[[x_var]], y = .data[[y_var]])) +
+    p <- ggplot(df_conv, aes(x = .data[[x_var]], y = .data[[y_var]])) +
       geom_line(aes(colour = .data[[group_var]], group = .data[[group_var]]), linewidth = 0.9) +
       geom_point(aes(colour = .data[[group_var]], shape = .data[[group_var]]),
                  size = 3, fill = "white", stroke = 0.8)
 
-    if (!is.null(label_var) && label_var %in% names(df)) {
+    if (!is.null(label_var) && label_var %in% names(df_conv)) {
       p <- p + geom_text(aes(label = .data[[label_var]]),
                          hjust = -0.4, vjust = -0.4, size = 2.8, colour = "grey40")
     }
@@ -786,7 +810,7 @@ plot_design_space <- function(exploration,
                                   expand = expansion(mult = c(0.02, 0.08)))
     }
 
-    p
+    add_fail_layer(p, x_var, y_var)
   }
 
   # Individual plots
@@ -810,7 +834,7 @@ plot_design_space <- function(exploration,
 
   p_power <- if (length(stage1_vars) > 1 && "power_stage1" %in% names(df)) {
     x2 <- stage1_vars[2]
-    ggplot(df, aes(x = .data[[x2]], y = power_stage1)) +
+    p <- ggplot(df_conv, aes(x = .data[[x2]], y = power_stage1)) +
       geom_line(aes(colour = .data[[group_var]], group = .data[[group_var]]), linewidth = 0.9) +
       geom_point(aes(colour = .data[[group_var]], shape = .data[[group_var]]),
                  size = 3, fill = "white", stroke = 0.8) +
@@ -826,12 +850,15 @@ plot_design_space <- function(exploration,
       ) +
       theme_publication() +
       theme(legend.position = "bottom")
+
+    add_fail_layer(p, x2, "power_stage1")
   } else NULL
 
   # Probabilities plot
   p_probs <- if (all(c("prob_efficacy", "prob_futility", "prob_continue") %in% names(df))) {
+    # Pivot converged data
     df_long <- tidyr::pivot_longer(
-      df,
+      df_conv,
       cols = c(prob_efficacy, prob_futility, prob_continue),
       names_to = "outcome",
       values_to = "probability",
@@ -843,11 +870,38 @@ plot_design_space <- function(exploration,
       labels = c("Efficacy stop", "Continue", "Futility stop")
     )
 
-    ggplot(df_long, aes(x = .data[[x_var]], y = probability, colour = outcome)) +
+    p <- ggplot(df_long, aes(x = .data[[x_var]], y = probability, colour = outcome)) +
       geom_line(aes(linetype = outcome), linewidth = 0.8) +
-      geom_point(size = 2) +
-      facet_wrap(as.formula(paste("~", group_var)),
-                 labeller = labeller(.default = function(x) paste(group_var, "=", x))) +
+      geom_point(size = 2)
+
+    # Add non-converged points to probabilities facets
+    if (has_failures && all(c("prob_efficacy", "prob_futility", "prob_continue") %in% names(df_fail))) {
+      df_fail_long <- tidyr::pivot_longer(
+        df_fail,
+        cols = c(prob_efficacy, prob_futility, prob_continue),
+        names_to = "outcome",
+        values_to = "probability",
+        names_prefix = "prob_"
+      )
+      df_fail_long$outcome <- factor(
+        df_fail_long$outcome,
+        levels = c("efficacy", "continue", "futility"),
+        labels = c("Efficacy stop", "Continue", "Futility stop")
+      )
+      p <- p +
+        geom_point(data = df_fail_long,
+                   aes(x = .data[[x_var]], y = probability),
+                   colour = "grey45", shape = 4, size = 2, stroke = 0.8,
+                   inherit.aes = FALSE) +
+        facet_wrap(as.formula(paste("~", group_var)),
+                   labeller = labeller(.default = function(x) paste(group_var, "=", x)))
+    } else {
+      p <- p +
+        facet_wrap(as.formula(paste("~", group_var)),
+                   labeller = labeller(.default = function(x) paste(group_var, "=", x)))
+    }
+
+    p +
       scale_colour_manual(values = palette_outcome) +
       scale_linetype_manual(values = c("Efficacy stop" = "solid",
                                        "Continue" = "dashed",
@@ -954,11 +1008,20 @@ find_optimal_fixed_design <- function(target_power = 0.8,
                                       cost_params = list(rho = 25),
                                       verbose = TRUE) {
 
-  # Default power function: two-sided test using I_eff
+  # Default power function: two-sided test using I_eff with t-distribution
   if (is.null(power_fn)) {
     power_fn <- function(model_output) {
       mu <- model_output$b1 * sqrt(model_output$I_eff)
-      pnorm(-1.96 - mu) + (1 - pnorm(1.96 - mu))
+      df <- model_output$df_full %||% Inf
+
+      if (is.finite(df)) {
+        t_crit <- qt(0.975, df = df)
+        # Non-central t
+        pt(-t_crit, df = df, ncp = mu) + pt(t_crit, df = df, ncp = mu, lower.tail = FALSE)
+      } else {
+        # Fall back to normal
+        pnorm(-1.96 - mu) + (1 - pnorm(1.96 - mu))
+      }
     }
   }
 
@@ -1370,8 +1433,8 @@ plot_fixed_comparison <- function(comparison,
 
   type <- match.arg(type)
 
-
-  df <- comparison$comparison
+  print(comparison$comparison$converged)
+  df <- comparison$comparison[comparison$comparison$converged,]
   fixed_cost <- comparison$fixed$optimal$cost
 
   stage1_vars <- names(comparison$adaptive$params$stage1_grid)
@@ -1501,3 +1564,130 @@ summarise_pareto <- function(pareto_df) {
 
 # Null coalescing operator
 `%||%` <- function(x, y) if (is.null(x)) y else x
+
+plot_cost_distribution <- function(results_lambda = NULL,
+                                   results_cap = NULL,
+                                   fixed_cost = NULL,
+                                   sample_size_fn,
+                                   rho = 30,
+                                   hypothesis = "H1") {
+
+  build_cost_df <- function(results, label) {
+    res <- results$raw
+    if (!is.null(res$results)) {
+      r <- res$results
+    } else {
+      stop("No results found. For explored designs, extract a single result first.")
+    }
+
+    ss <- compute_sample_size(r, sample_size_fn, hypothesis = hypothesis, rho = rho)
+
+    dist <- ss$distribution
+    opt <- r$quadrature$optimal_designs
+    mu1 <- if (hypothesis == "H1") r$params$mu1 else 0
+
+    gl_weights_raw <- r$quadrature$gl_weights_raw
+    weights <- gl_weights_raw * dnorm(dist$z1 - mu1)
+
+    cost_s1 <- ss$metrics$cost_stage1 %||%
+      ss$summary$value[ss$summary$metric == "cost_stage1"]
+
+    cost_fn_s2 <- generate_cost_fn(results$design$spec, "stage2")
+
+    cost_s2 <- sapply(seq_len(nrow(opt)), function(i) {
+      if (!opt$continue[i]) return(0)
+      env <- as.list(r$models$list[[1]])
+      for (p in results$design$spec$stage2_params) {
+        if (p %in% names(opt)) {
+          val <- opt[[p]][i]
+          env[[p]] <- if (is.na(val)) 0 else val
+        }
+      }
+      cost_fn_s2(env, rho)
+    })
+
+    total_cost <- cost_s1 + cost_s2
+    total_cost[opt$efficacy_stop | opt$futility_stop] <- cost_s1
+
+    E_cost <- sum(total_cost * weights)
+    max_cost <- max(total_cost[opt$continue], na.rm = TRUE)
+
+    data.frame(
+      z1 = dist$z1,
+      cost = total_cost,
+      density = dnorm(dist$z1 - mu1),
+      weight = weights,
+      outcome = ifelse(opt$efficacy_stop, "Efficacy stop",
+                       ifelse(opt$futility_stop, "Futility stop", "Continue")),
+      method = label,
+      E_cost = E_cost,
+      max_cost = max_cost
+    )
+  }
+
+  dfs <- list()
+  if (!is.null(results_lambda)) dfs$lambda <- build_cost_df(results_lambda, "Cost-penalised")
+  if (!is.null(results_cap))    dfs$cap    <- build_cost_df(results_cap, "Budget-constrained")
+
+  if (length(dfs) == 0) stop("Provide at least one results object")
+
+  df <- do.call(rbind, dfs)
+
+  vlines <- unique(df[, c("method", "E_cost")])
+  vlines_long <- rbind(
+    data.frame(method = vlines$method, cost = vlines$E_cost, line_type = "E[cost]")
+  )
+  if (!is.null(fixed_cost)) {
+    vlines_long <- rbind(
+      vlines_long,
+      data.frame(method = unique(df$method), cost = fixed_cost, line_type = "Fixed design")
+    )
+  }
+
+  palette_outcome <- c("Efficacy stop" = "#2d6a4f",
+                       "Futility stop" = "#ae2012",
+                       "Continue"      = "#457b9d")
+
+  palette_lines <- c("E[cost]"      = "#264653",
+                     "Max cost"     = "#e76f51",
+                     "Fixed design" = "#6c757d")
+
+  df$outcome <- factor(df$outcome,
+                       levels = c("Efficacy stop", "Continue", "Futility stop"))
+
+  # Rescale density to cost axis for ribbon
+  df$density_scaled <- df$density / max(df$density) * max(df$cost) * 0.3
+
+  p <- ggplot(df, aes(x = z1)) +
+    # Density ribbon (background)
+    geom_ribbon(aes(ymin = 0, ymax = density_scaled),
+                fill = "grey75", alpha = 0.5) +
+    # Cost profile coloured by outcome
+    geom_step(aes(y = cost, colour = outcome), linewidth = 1) +
+    geom_point(aes(y = cost, colour = outcome), size = 1.5) +
+    # Reference lines
+    geom_hline(data = vlines_long,
+               aes(yintercept = cost, linetype = line_type),
+               linewidth = 0.7) +
+    scale_colour_manual(values = palette_outcome) +
+    scale_linetype_manual(values = c("E[cost]"      = "solid",
+                                     "Max cost"     = "dashed",
+                                     "Fixed design" = "dotted")) +
+    scale_y_continuous(labels = scales::comma) +
+    labs(
+      x = expression(z[1]),
+      y = "Total trial cost",
+      colour = "Outcome",
+      linetype = NULL
+    ) +
+    theme_publication() +
+    theme(legend.position = "bottom")
+
+  if (length(dfs) > 1) {
+    p <- p +
+      facet_wrap(~ method, ncol = 1) +
+      theme(strip.text = element_text(face = "bold"))
+  }
+
+  p
+}

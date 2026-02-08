@@ -157,10 +157,6 @@ simulate_adaptive_trial <- function(results,
     df_s1$stage <- 1
 
     # =========================================
-    # STAGE 1: Fit mixed model with lmer
-    # =========================================
-
-    # =========================================
     # STAGE 1: Fit mixed model with lmerTest
     # =========================================
 
@@ -207,7 +203,7 @@ simulate_adaptive_trial <- function(results,
       reject_s1 <- abs(z1_weighted) > 1.96
 
       return(list(
-        reject = reject_s1,
+        reject = TRUE,
         stage = 1,
         z1 = z1,
         z1_weighted = z1_weighted,
@@ -815,5 +811,6 @@ plot_simulation_diagnostics <- function(sim_output) {
   (p1 + p2) / (p3 + p4)
 }
 
-# Null coalescing
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
+out <- simulate_adaptive_trial(results_single, n_sims = 10000, hypothesis = "H0")
+plot_simulation_diagnostics(out2)
+out2 <- simulate_adaptive_trial(results_single, n_sims = 1000, hypothesis = "H1")

@@ -8,12 +8,12 @@ sw_model_builder <- function(design_params, fixed_params) {
     cl_mid <- (k - t1 + 1) / 2
 
     # Stage 1
-    df1 <- nelder(as.formula(paste0("~ cl(", k, ") * t(", t1, ")")))
+    df1 <- glmmrBase::nelder(as.formula(paste0("~ cl(", k, ") * t(", t1, ")")))
     df1$int <- I(df1$t > df1$cl) * 1
 
     # Stage 2
-    df2 <- nelder(as.formula(paste0("~ cl(", (k - t1 + 1), ") * t(", t2, ")")))
-    df3 <- nelder(as.formula(paste0("~ cl(", t1 - 1, ") * t(", t2, ")")))
+    df2 <- glmmrBase::nelder(as.formula(paste0("~ cl(", (k - t1 + 1), ") * t(", t2, ")")))
+    df3 <- glmmrBase::nelder(as.formula(paste0("~ cl(", t1 - 1, ") * t(", t2, ")")))
     df3$int <- 1
     df3$t <- df3$t + t1
 
@@ -75,7 +75,7 @@ sw_model_builder <- function(design_params, fixed_params) {
   cache_key <- paste(k, t1, t2, r, sep = "_")
 
   if (is.null(cache$mod) || cache$cache_key != cache_key) {
-    cache$mod <- Model$new(
+    cache$mod <- glmmrBase::Model$new(
       ~ int + factor(t) + (1|gr(cl)*ar0(t)),
       data = df,
       family = binomial(),
@@ -96,9 +96,9 @@ sw_model_builder <- function(design_params, fixed_params) {
   D <- cache$mod$covariance$D
   Z <- cache$mod$covariance$Z
 
-  Z_sp <- Matrix(Z, sparse = TRUE)
-  D_sp <- Matrix(D, sparse = TRUE)
-  S <- Diagonal(x = 1/cache$mod$w_matrix()) + Z_sp %*% tcrossprod(D_sp, Z_sp)
+  Z_sp <- Matrix::Matrix(Z, sparse = TRUE)
+  D_sp <- Matrix::Matrix(D, sparse = TRUE)
+  S <- Matrix::Diagonal(x = 1/cache$mod$w_matrix()) + Z_sp %*% Matrix::tcrossprod(D_sp, Z_sp)
   V <- as.matrix(S)
 
   idx1 <- which(df$t <= t1)  # More robust indexing
@@ -124,6 +124,9 @@ sw_model_builder <- function(design_params, fixed_params) {
     n2 = n2,
     m1 = m1,
     m2 = m2,
+    N1_total = k * t1 * m1,       # individuals in stage 1
+    N2_total = k * t2 * m2,       # individuals in stage 2
+    N_total = k * t1 * m1 + k * t2 * m2,  # total individuals
     k = k,
     t1 = t1,
     t2 = t2,
@@ -159,16 +162,16 @@ sw_crt <- function(icc, cac = 0.8, delta, baseline,
     resources = list(
       n_s1 = ~ k * t1 * m1,
       n_s2 = ~ k * t2 * m2,
-      periods_s1 = ~ k * t1,        # Renamed: these are periods, not clusters
+      periods_s1 = ~ k * t1,
       periods_s2 = ~ k * t2
     ),
     cost_structure = list(
-      weights = c(n = 1, periods = "rho"),  # Changed to periods
+      weights = c(n = 1, periods = "rho"),
       stage2_resources = c("n_s2", "periods_s2")
     ),
     model_builder = sw_model_builder,
     n_arms = 1,
-    design_type = "stepped_wedge"  # ISSUE 9: Was "parallel", should be "stepped_wedge"
+    design_type = "stepped_wedge"
   )
 
   structure(
@@ -192,44 +195,63 @@ sw_crt <- function(icc, cac = 0.8, delta, baseline,
 
 # Define the design in ONE call - no custom functions needed!
 design <- sw_crt(
-  icc = 0.05,           # Intra-cluster correlation
+  icc = 0.06,           # Intra-cluster correlation
   cac = 0.8,            # Cluster autocorrelation
-  delta = -0.1,         # Treatment effect
+  delta = -0.07,         # Treatment effect
   baseline = 0.2,
   k = 11,    # Stage 1 clusters per arm (explore these)
-  t1 = 2:5, # Stage 1 individuals per cluster
-  m1 = seq(20,60,by=20),
-  rho = 10              # Cluster-to-individual cost ratio
+  t1 = 3:6,
+  m1 = seq(10,60,by=10),
+  rho = 15              # Cluster-to-individual cost ratio
 )
 
 # Run the analysis - ONE function call
-results <- adaptive_analysis(design, target_power = 0.8, verbose = TRUE, tol = 0.01)
+results <- adaptive_analysis(design, target_power = 0.8, verbose = TRUE, tol = 0.01, method = "cost_cap")
 
 # View summary
 summary(results)
 
 # Plot results
-plot(results, type = "EN")      # Expected sample size
-plot(results, type = "Nmax")    # Maximum sample size
-plot(results, type = "pareto")  # Pareto frontier
+p1 <- plot(results, type = "EN")      # Expected sample size
+p2 <- plot(results, type = "Nmax")    # Maximum sample size
+p3 <- plot(results, type = "pareto", objectives = list(E_cost = "min", max_cost = "min"))  # Pareto frontier
+
+pareto <- find_pareto(results, objectives = list(E_cost = "min", max_cost = "min"))
+
 
 # Define the design in ONE call - no custom functions needed!
 design_single <- sw_crt(
-  icc = 0.05,           # Intra-cluster correlation
+  icc = 0.06,           # Intra-cluster correlation
   cac = 0.8,            # Cluster autocorrelation
-  delta = -0.1,         # Treatment effect
+  delta = -0.07,         # Treatment effect
   baseline = 0.2,
   k = 11,    # Stage 1 clusters per arm (explore these)
-  t1 = 4, # Stage 1 individuals per cluster
-  m1 = 20,
-  rho = 30              # Cluster-to-individual cost ratio
+  t1 = 5, # Stage 1 individuals per cluster
+  m1 = 30,
+  rho = 15              # Cluster-to-individual cost ratio
 )
 
 # Analyse
-results_single <- adaptive_analysis(design_single, target_power = 0.8)
+results_single <- adaptive_analysis(design_single, target_power = 0.8, tol = 0.01, method = "cost_cap")
+
+interim_analysis(results_single, z1_obs = -1.7,
+                 theta_hat = list(icc = 0.001))
+
+int1 <-interim_sensitivity(
+  results_single,
+  scenarios = list(
+    "Planned (ICC = 0.06)" = list(icc = 0.06),
+    "Favourable (ICC = 0.02)"           = list(icc = 0.02),
+    "Very favourable (ICC = 0.01)"         = list(icc = 0.01)
+  )
+)
 
 # Summary shows more detail for single designs
-summary(results_single)
+summary(int1)
+
+plot(int1, type = "decision")
+plot(int1, type = "cp")
+plot(sens, type = "all")
 
 # Decision rules
 plot(results_single, type = "decision")
@@ -238,47 +260,11 @@ plot_decision_rules(results_single, design_var = "t2")
 rules <- get_decision_rules(results_single)
 print(rules[seq(1, nrow(rules), by = 5), c("z1", "continue", "cp", "m2", "k2")])
 
-
-
-# =============================================================================
-# Example 3: Pareto Frontier Analysis
-# =============================================================================
-
-cat("\n=== Example 3: Pareto Frontier ===\n\n")
-
-# Find Pareto-optimal designs (minimise E[N] and N_max)
-pareto <- find_pareto(results, objectives = list(E_cost = "min", max_cost = "min"))
-print(pareto[, c("k1", "m1", "E_N", "N_max", "power_stage1")])
-
-# Different objectives: minimise cost, maximise early stopping
-pareto2 <- find_pareto(results,
-                       objectives = list(E_cost = "min", prob_efficacy = "max"))
-print(pareto2[, c("k1", "m1", "E_cost", "prob_efficacy")])
-
-# With constraints
-pareto3 <- find_pareto(results,
-                       objectives = list(E_N = "min", N_max = "min"),
-                       constraints = list(power_stage1 = c(0.3, 0.6)))
-print(pareto3[, c("k1", "m1", "E_N", "N_max", "power_stage1")])
-
-
-
-
-#' Plot stepped-wedge trial design layout
-#'
-#' @param df Data frame with columns: cl (cluster), t (time), int (intervention 0/1)
-#' @param t1 Stage 1 periods (for interim analysis line)
-#' @param title Optional title
-#' @param show_legend Show legend (default TRUE)
-#' @param cluster_labels Optional vector of cluster labels
-#' @param time_labels Optional vector of time period labels
-#' @return A ggplot object
 plot_sw_design <- function(df, t1 = NULL, title = NULL,
                            show_legend = TRUE,
                            cluster_labels = NULL,
                            time_labels = NULL) {
 
-  library(ggplot2)
 
   # Ensure factors for proper ordering
   df$cl <- factor(df$cl, levels = sort(unique(df$cl), decreasing = TRUE))
@@ -337,7 +323,6 @@ plot_sw_design <- function(df, t1 = NULL, title = NULL,
 #' @return A ggplot object
 plot_sw_design_detailed <- function(df, t1 = NULL, show_n = TRUE, title = NULL) {
 
-  library(ggplot2)
 
   # Ensure factors
   df$cl <- factor(df$cl, levels = sort(unique(df$cl), decreasing = TRUE))
@@ -402,8 +387,6 @@ plot_sw_design_detailed <- function(df, t1 = NULL, show_n = TRUE, title = NULL) 
 #' @return A combined ggplot
 plot_sw_designs_compare <- function(designs, t1 = NULL) {
 
-  library(ggplot2)
-
   # Combine with design identifier
   df_list <- lapply(names(designs), function(nm) {
     d <- designs[[nm]]
@@ -446,12 +429,12 @@ generate_sw_design <- function(k, t1, t2, r) {
   cl_mid <- (k - t1 + 1) / 2
 
   # Stage 1
-  df1 <- nelder(as.formula(paste0("~ cl(", k, ") * t(", t1, ")")))
+  df1 <- glmmrBase::nelder(as.formula(paste0("~ cl(", k, ") * t(", t1, ")")))
   df1$int <- I(df1$t > df1$cl) * 1
 
   # Stage 2
-  df2 <- nelder(as.formula(paste0("~ cl(", (k - t1 + 1), ") * t(", t2, ")")))
-  df3 <- nelder(as.formula(paste0("~ cl(", t1 - 1, ") * t(", t2, ")")))
+  df2 <- glmmrBase::nelder(as.formula(paste0("~ cl(", (k - t1 + 1), ") * t(", t2, ")")))
+  df3 <- glmmrBase::nelder(as.formula(paste0("~ cl(", t1 - 1, ") * t(", t2, ")")))
   df3$int <- 1
   df3$t <- df3$t + t1
 
@@ -471,13 +454,16 @@ generate_sw_design <- function(k, t1, t2, r) {
   return(df)
 }
 
-df <- generate_sw_design(11,4,3,0.4)
-plot_sw_design(df, t1 = 4, title = "SW Design: k=11, t1=4, t2=3, r=0.5")
+df <- generate_sw_design(11,4,5,1)
+plot_sw_design(df, t1 = 4, title = "SW Design: k=11, t1=4, t2=5, r=1.0")
+
+
 df$n <- ifelse(df$t <= 4, 20, 50)
 
 designs <- list(
-  "z1 = 0.0" = generate_sw_design(11, 4, 6, r = 0.8),
-  "z1 = -1.0" = generate_sw_design(11, 4, 3, r = 0.4),
-  "z1 = -1.5" = generate_sw_design(11, 4, 1, r = 0)
+  "ICC = 0.06 (m2 = 80)" = generate_sw_design(11, 5, 7, r = 1.05),
+  "ICC = 0.02 (m2 = 40)" = generate_sw_design(11, 5, 3, r = 0.7),
+  "ICC = 0.01 (m2 = 60)" = generate_sw_design(11, 5, 1, r = 0.0)
 )
 plot_sw_designs_compare(designs, t1 = 4)
+

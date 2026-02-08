@@ -9,7 +9,8 @@ find_optimal_designs(
   design_grid,
   model_summaries,
   resource_vars = NULL,
-  w1_ref = NULL
+  w1_ref = NULL,
+  cost_cap = NULL
 )
 }
 \arguments{
