@@ -13,6 +13,7 @@
 #' @param idx2 Row indices for stage 2
 #' @param j Column index for treatment effect (default 2)
 #' @return List with I1_eff, I2_eff, I_eff (all scalars)
+#' @export
 efficient_score_decomposition <- function(X, V, idx1, idx2, j = 2) {
 
   n <- nrow(X)
@@ -790,9 +791,9 @@ compute_sample_size <- function(results, sample_size_fn = NULL,
     gl_weights_raw <- results$quadrature$weights / dnorm(z1_grid - results$params$mu1)
   }
   weights <- gl_weights_raw * dnorm(z1_grid - mu1)
-
-  # Call user-provided sample size function
-  ss_info <- sample_size_fn(opt, results, ...)
+  # In compute_sample_size, before calling sample_size_fn:
+  cost_params <- results$params$cost_params %||% list(rho = 30)
+  ss_info <- do.call(sample_size_fn, c(list(opt, results), cost_params))
 
   n_stage1 <- ss_info$n_stage1
   n_stage2 <- ss_info$n_stage2

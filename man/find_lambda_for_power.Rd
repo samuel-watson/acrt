@@ -14,11 +14,14 @@ find_lambda_for_power(
   resource_vars = NULL,
   method = c("lambda", "cost_cap"),
   lambda_range = c(1e-08, 1),
-  tol = 0.001,
+  tol = 0.01,
   max_iter = 50,
   z1_range = c(-4, 4),
   n_quad = 50,
-  verbose = TRUE
+  verbose = TRUE,
+  w1_override = NULL,
+  efficacy_override = NULL,
+  t_crit_override = NULL
 )
 }
 \arguments{

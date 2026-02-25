@@ -1,7 +1,7 @@
 Package: acrt
 Type: Package
-Title: What the Package Does (Title Case)
-Version: 0.1.0
+Title: Adaptive Cluster Randomised Trial Analysis
+Version: 0.2.1
 Date: 2026-01-20
 Authors@R: 
     person(given = "Sam",
@@ -9,9 +9,9 @@ Authors@R:
            role = c("aut", "cre"),
            email = "s.i.watson@bham.ac.uk",
            comment = c(ORCID = "0000-0002-8972-769X"))
-Maintainer: The package maintainer <yourself@somewhere.net>
-Description: More about what it does (maybe more than one line)
-    Use four spaces when indenting paragraphs within the Description.
+Description: Analysis of adaptive cluster randomised trials including 
+ identification of efficient first stage designs, decision rule analysis,
+ interim analysis methods, and a range of plotting tools.
 License: CC BY-SA 4.0 
 Encoding: UTF-8
 LazyData: true
@@ -31,5 +31,9 @@ Collate:
   "adaptive_design_space_v2.R"
   "analysis_interface.R"
   "adaptive_plotting_comparison.R"
-  "custom_design_guide.R"
   "acrt.R"
+Config/Needs/website: rmarkdown
+Suggests: 
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr

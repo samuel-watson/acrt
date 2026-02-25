@@ -9,6 +9,8 @@ interim_analysis(
   z1_obs,
   theta_hat = list(),
   delta = NULL,
+  recalibrate = TRUE,
+  target_power = 0.8,
   verbose = TRUE
 )
 }
@@ -20,6 +22,10 @@ interim_analysis(
 \item{theta_hat}{Named list of updated parameter estimates (e.g. list(icc = 0.03, sigma2 = 1.2))}
 
 \item{delta}{Treatment effect for conditional power (NULL = use planned value)}
+
+\item{recalibrate}{Logical indicating whether to recalibrate the lambda parameter}
+
+\item{target_power}{The target power}
 
 \item{verbose}{Print details}
 }

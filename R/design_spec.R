@@ -18,6 +18,7 @@
 #' @param n_arms Number of arms (default 2)
 #' @param design_type Character string identifying the design type
 #' @return A crt_design_spec object
+#' @export
 crt_design_spec <- function(stage1_params,
                             stage2_params,
                             resources,
@@ -70,13 +71,16 @@ eval_resource <- function(formula, env) {
 #' @return Numeric weight
 resolve_weight <- function(weight_spec, env) {
   if (is.numeric(weight_spec)) {
-    weight_spec
-  } else if (is.character(weight_spec)) {
-    env[[weight_spec]] %||% 1
-
-} else {
-    1
+    return(weight_spec)
   }
+  if (is.character(weight_spec)) {
+    # Try as numeric first (handles "1" from c() coercion)
+    num <- suppressWarnings(as.numeric(weight_spec))
+    if (!is.na(num)) return(num)
+    # Otherwise look up in environment
+    return(env[[weight_spec]] %||% 1)
+  }
+  1
 }
 
 #' Identify which resource type a resource name belongs to
@@ -84,16 +88,28 @@ resolve_weight <- function(weight_spec, env) {
 #' @param cost_weights Named vector of weights like c(n = 1, clusters = "rho")
 #' @return The matching weight name or NULL
 match_resource_type <- function(resource_name, cost_weights) {
+  # Strip stage suffix to get base type
+  base_name <- sub("_s[12]$|_stage[12]$", "", resource_name)
+
+  # Direct match on base name
+  if (base_name %in% names(cost_weights)) {
+    return(base_name)
+  }
+
+  # Prefix match: does any weight type start the resource name?
   for (type in names(cost_weights)) {
     if (grepl(paste0("^", type), resource_name, ignore.case = TRUE)) {
       return(type)
     }
   }
-  # Try without prefix
-  base_name <- sub("_s[12]$|_stage[12]$", "", resource_name)
-  if (base_name %in% names(cost_weights)) {
-    return(base_name)
+
+  # Reverse: does the resource base name start any weight type?
+  for (type in names(cost_weights)) {
+    if (grepl(paste0("^", base_name), type, ignore.case = TRUE)) {
+      return(type)
+    }
   }
+
   NULL
 }
 
@@ -114,10 +130,11 @@ generate_cost_fn <- function(spec, stage = c("stage2", "total")) {
   cost_structure <- spec$cost_structure
   n_arms <- spec$n_arms
 
-  function(model_output, rho) {
+  function(model_output, ...) {
     # Build evaluation environment
     env <- if (is.list(model_output)) as.list(model_output) else list()
-    env$rho <- rho
+    cost_params <- list(...)
+    for (nm in names(cost_params)) env[[nm]] <- cost_params[[nm]]
     env$n_arms <- n_arms
 
     # Determine which resources to include
@@ -134,6 +151,7 @@ generate_cost_fn <- function(spec, stage = c("stage2", "total")) {
 
     # Calculate total cost
     total_cost <- 0
+    #cat(sprintf("--- Cost calculation (stage = %s) ---\n", stage))
     for (rname in resource_names) {
       if (!rname %in% names(resources)) next
 
@@ -150,10 +168,11 @@ generate_cost_fn <- function(spec, stage = c("stage2", "total")) {
       } else {
         1
       }
-
+      # cat(sprintf("  %s: qty = %.1f, weight_type = %s, weight = %.1f, subtotal = %.1f\n",
+      #             rname, qty, weight_type %||% "NONE", weight, qty * weight))
       total_cost <- total_cost + qty * weight
     }
-
+    #cat(sprintf("  TOTAL = %.1f\n", total_cost))
     total_cost
   }
 }
@@ -168,36 +187,32 @@ generate_cost_fn <- function(spec, stage = c("stage2", "total")) {
 #' @return A function with signature function(opt_designs, results, rho)
 generate_sample_size_fn <- function(spec) {
 
-  # Capture spec components
   resources <- spec$resources
   cost_structure <- spec$cost_structure
   stage2_params <- spec$stage2_params
   n_arms <- spec$n_arms
 
-  # Find the n resources
   n_s1_name <- grep("^n_s1$|^n_stage1$", names(resources), value = TRUE)[1]
   n_s2_name <- grep("^n_s2$|^n_stage2$", names(resources), value = TRUE)[1]
 
-  # Find cluster resources (if any)
   clusters_s1_name <- grep("^clusters_s1|^k_s1", names(resources), value = TRUE)[1]
   clusters_s2_name <- grep("^clusters_s2|^k_s2", names(resources), value = TRUE)[1]
 
-  function(opt_designs, results, rho = 30) {
+  function(opt_designs, results, ...) {    # <-- changed from rho = 30
 
-    # Get model output for base parameters
+    cost_params <- list(...)
+
     model1 <- results$models$list[[1]]
     design_grid <- results$models$design_grid
 
-    # Base environment with stage 1 params
     env_base <- as.list(model1)
-    env_base$rho <- rho
+    for (nm in names(cost_params)) env_base[[nm]] <- cost_params[[nm]]
     env_base$n_arms <- n_arms
 
     # Stage 1 sample size (fixed)
     n_stage1 <- if (!is.na(n_s1_name)) {
       eval_resource(resources[[n_s1_name]], env_base)
     } else {
-      # Fallback
       n_arms * (env_base$k1 %||% 1) * (env_base$m1 %||% 1)
     }
 
@@ -233,17 +248,14 @@ generate_sample_size_fn <- function(spec) {
       max(n_stage2, na.rm = TRUE)
     }
 
-    # Maximum stage 2 actually used by decision rules
     n_stage2_max_used <- max(n_stage2, na.rm = TRUE)
 
-    # Cluster calculations
     clusters_s1 <- if (!is.na(clusters_s1_name)) {
       eval_resource(resources[[clusters_s1_name]], env_base)
     } else {
       n_arms * (env_base$k1 %||% 0)
     }
 
-    # Expected stage 2 clusters
     clusters_s2_vec <- sapply(seq_len(nrow(opt_designs)), function(i) {
       if (!opt_designs$continue[i]) return(0)
 
@@ -268,14 +280,13 @@ generate_sample_size_fn <- function(spec) {
       max(clusters_s2_vec, na.rm = TRUE)
     }
 
-    # Cost calculations using generated functions
+    # Cost calculations
     cost_fn_s2 <- generate_cost_fn(spec, "stage2")
     cost_fn_total <- generate_cost_fn(spec, "total")
 
-    # Stage 1 cost
-    cost_stage1 <- cost_fn_total(model1, rho) - cost_fn_s2(model1, rho)
+    cost_stage1 <- do.call(cost_fn_total, c(list(model1), cost_params)) -
+      do.call(cost_fn_s2, c(list(model1), cost_params))
 
-    # Stage 2 costs (vector)
     cost_stage2 <- sapply(seq_len(nrow(opt_designs)), function(i) {
       if (!opt_designs$continue[i]) return(0)
 
@@ -287,10 +298,9 @@ generate_sample_size_fn <- function(spec) {
         }
       }
 
-      cost_fn_s2(env, rho)
+      do.call(cost_fn_s2, c(list(env), cost_params))
     })
 
-    # Expected values using quadrature weights
     continue_idx <- opt_designs$continue
     weights <- results$quadrature$weights
 
@@ -298,15 +308,14 @@ generate_sample_size_fn <- function(spec) {
     E_cost_stage2 <- sum(cost_stage2 * weights)
     E_cost_total <- cost_stage1 + E_cost_stage2
 
-    # Maximum cost
-    cost_stage2_max <- cost_fn_s2(env_max, rho)
+    cost_stage2_max <- do.call(cost_fn_s2, c(list(env_max), cost_params))
     cost_total_max <- cost_stage1 + cost_stage2_max
 
     list(
       n_stage1 = n_stage1,
       n_stage2 = n_stage2,
-      n_total_max = n_stage1 + n_stage2_max_used,      # Actual max from decisions
-      n_total_max_grid = n_stage1 + n_stage2_max_grid, # Theoretical max from grid
+      n_total_max = n_stage1 + n_stage2_max_used,
+      n_total_max_grid = n_stage1 + n_stage2_max_grid,
       n_total_min = n_stage1,
       metrics = list(
         clusters_s1 = clusters_s1,
@@ -318,7 +327,7 @@ generate_sample_size_fn <- function(spec) {
         E_cost_stage2 = E_cost_stage2,
         E_cost = E_cost_total,
         max_cost = cost_stage1 + max(cost_stage2, na.rm = TRUE),
-        max_cost_grid = cost_total_max  # Also add this
+        max_cost_grid = cost_total_max
       )
     )
   }

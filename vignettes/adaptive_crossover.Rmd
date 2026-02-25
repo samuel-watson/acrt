@@ -1,0 +1,384 @@
+---
+title: "Adaptive Crossover Cluster Randomised Trial"
+author: "Sam Watson"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Adaptive Crossover Cluster Randomised Trial}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center"
+)
+library(acrt)
+library(ggplot2)
+library(Matrix)
+
+# Load precomputed results for expensive operations
+load("crossover_vignette_precomputed.rda")
+```
+
+## Introduction
+
+This vignette demonstrates how to design and analyse an **adaptive crossover cluster randomised trial** with a binary outcome using `adaptiveCRT`. In a crossover CRT, clusters receive both the intervention and control in different time periods, which can substantially improve efficiency compared to a parallel design. The adaptive element allows the trial to modify the stage 2 design --- the number of additional time periods ($t_2$), cluster-period sample size ($m_2$), and number of new clusters ($k_2$) --- based on interim results.
+
+We consider a trial with the following features:
+
+- **Binary outcome** (binomial family) with a baseline event rate of 15%
+- **Treatment effect** of $\delta = -0.03$ (absolute risk reduction)
+- **Intra-cluster correlation** of 0.10 with cluster autocorrelation of 0.80
+- **Two-period crossover** in stage 1: each arm of $k_1$ clusters receives treatment in one period and control in the other
+- **Stage 2 adaptation**: extend by 1--2 additional crossover periods, adjust $m_2$, and optionally recruit new clusters
+
+## The crossover design structure
+
+In the crossover layout, clusters are divided into two arms. In stage 1 (two periods), arm 1 receives control then intervention, while arm 2 receives intervention then control. At the interim analysis, we can adapt stage 2 in several ways:
+
+- **Additional periods** ($t_2 = 1$ or $2$): existing clusters contribute further observations under a new crossover schedule
+- **Sample size** ($m_2$): the number of individuals per cluster-period in stage 2 can differ from stage 1
+- **New clusters** ($k_2$): fresh clusters can be recruited for stage 2 only
+
+This flexibility lets the trial respond to what is learned at the interim about the variance components, particularly the ICC and cluster autocorrelation, which are often poorly estimated at the planning stage.
+
+## Writing the model builder
+
+The crossover model builder handles the construction of the design matrix, the GLMM covariance structure, and the efficient information decomposition. Key features include support for multiple outcome families (Gaussian, binomial, Poisson) and parameter conversion to the appropriate link scale.
+
+```{r model-builder, eval = FALSE}
+crossover_model_builder <- function(design_params, fixed_params) {
+  cache <- fixed_params$cache
+  k1 <- fixed_params$k1
+  m1 <- fixed_params$m1
+  k2 <- design_params$k2
+  m2 <- design_params$m2
+  icc <- fixed_params$icc
+  cac <- fixed_params$cac
+  delta <- fixed_params$delta
+  t2 <- design_params$t2
+  family <- fixed_params$family %||% "gaussian"
+  baseline <- fixed_params$baseline %||% 0
+
+  # Convert parameters to appropriate scale
+  glm_params <- convert_to_glm_scale(
+    family = family, baseline = baseline,
+    delta = delta, icc = icc, cac = cac
+  )
+
+  # Stage 1: crossover (2 periods)
+  df1 <- glmmrBase::nelder(as.formula(paste0("~ (int(2) > cl(", k1, ")) * t(2)")))
+  df1$int <- df1$int - 1
+  df1$t <- df1$t - 1
+  df1$trt <- ifelse(
+    (df1$int == 0 & df1$t == 1) | (df1$int == 1 & df1$t == 0), 1, 0
+  )
+  df1$n <- m1
+
+  # Stage 2: additional period(s) for existing clusters
+  if (t2 == 1) {
+    df2_base <- glmmrBase::nelder(as.formula(paste0("~ int(2) > cl(", k1, ")")))
+    df2_base$int <- df2_base$int - 1
+    df2_base$t <- 2
+    df2_base$trt <- df2_base$int
+    df2_base$n <- m2
+  } else {
+    df2_base <- glmmrBase::nelder(
+      as.formula(paste0("~ (int(2) > cl(", k1, ")) * t(2)"))
+    )
+    df2_base$int <- df2_base$int - 1
+    df2_base$trt <- ifelse(
+      (df2_base$int == 0 & df2_base$t == 2) |
+      (df2_base$int == 1 & df2_base$t == 1), 1, 0
+    )
+    df2_base$n <- m2
+    df2_base$t <- df2_base$t + 1
+  }
+
+  # New clusters (if any)
+  if (k2 > 0) {
+    df2_new <- glmmrBase::nelder(
+      as.formula(paste0("~ (int(2) > cl(", k2, ")) * t(2)"))
+    )
+    df2_new$int <- df2_new$int - 1
+    df2_new$trt <- ifelse(
+      (df2_new$int == 0 & df2_new$t == 2) |
+      (df2_new$int == 1 & df2_new$t == 1), 1, 0
+    )
+    df2_new$n <- m2
+    df2_new$t <- df2_new$t + 1
+    df2_new$cl <- df2_new$cl + max(df1$cl)
+    df <- rbind(df1, df2_base, df2_new)
+  } else {
+    df <- rbind(df1, df2_base)
+  }
+
+  n_periods <- length(unique(df$t))
+  beta_full <- c(glm_params$beta[1], rep(0, n_periods - 1), glm_params$beta[2])
+
+  # Build or update GLMM model (with caching)
+  cache_key <- paste(k1, k2, t2, family, sep = "_")
+  if (is.null(cache$mod) || cache$cache_key != cache_key) {
+    if (family == "gaussian") {
+      cache$mod <- glmmrBase::Model$new(
+        ~ factor(t) + trt + (1|gr(cl)*ar0(t)),
+        data = df, family = glm_params$family,
+        mean = beta_full, covariance = glm_params$cov_pars,
+        weights = df$n, var_par = glm_params$var_par
+      )
+    } else if (family == "binomial") {
+      cache$mod <- glmmrBase::Model$new(
+        ~ factor(t) + trt + (1|gr(cl)*ar0(t)),
+        data = df, family = glm_params$family,
+        mean = beta_full,
+        covariance = c(glm_params$cov_pars[1] / cac, cac),
+        trials = df$n
+      )
+    } else if (family == "poisson") {
+      cache$mod <- glmmrBase::Model$new(
+        ~ factor(t) + trt + (1|gr(cl)*ar0(t)),
+        data = df, family = glm_params$family,
+        mean = beta_full, covariance = glm_params$cov_pars,
+        offset = log(df$n)
+      )
+    }
+    cache$cache_key <- cache_key
+  } else {
+    if (family == "gaussian") {
+      glmmrBase:::Model__set_weights(cache$mod$.__enclos_env__$private$ptr, df$n)
+    } else if (family == "binomial") {
+      glmmrBase:::Model__set_trials(
+        cache$mod$.__enclos_env__$private$ptr, as.integer(df$n)
+      )
+    } else if (family == "poisson") {
+      glmmrBase:::Model__set_offset(cache$mod$.__enclos_env__$private$ptr, log(df$n))
+    }
+    cache$mod$update_parameters(cov.pars = glm_params$cov_pars)
+  }
+
+  # Compute efficient information decomposition
+  n1 <- nrow(df1)
+  X <- cache$mod$mean$X
+  D <- cache$mod$covariance$D
+  Z <- cache$mod$covariance$Z
+  Z_sp <- Matrix::Matrix(Z, sparse = TRUE)
+  D_sp <- Matrix::Matrix(D, sparse = TRUE)
+  S <- Matrix::Diagonal(x = 1 / cache$mod$w_matrix()) +
+       Z_sp %*% Matrix::tcrossprod(D_sp, Z_sp)
+  V <- as.matrix(S)
+
+  idx1 <- 1:n1
+  idx2 <- (n1 + 1):nrow(df)
+  j_trt <- which(colnames(X) == "trt")
+
+  eff_decomp <- efficient_score_decomposition(X, V, idx1, idx2, j = j_trt)
+
+  list(
+    I1_eff = eff_decomp$I1_eff, I2_eff = eff_decomp$I2_eff,
+    I_eff = eff_decomp$I_eff,
+    w1 = sqrt(eff_decomp$I1_eff / eff_decomp$I_eff),
+    w2 = sqrt(eff_decomp$I2_eff / eff_decomp$I_eff),
+    b1 = glm_params$b1_link %||% glm_params$beta[2],
+    n1 = n1, n2 = nrow(df) - n1,
+    m1 = m1, m2 = m2, k1 = k1, k2 = k2, t2 = t2,
+    family = family, link = glm_params$link
+  )
+}
+```
+
+## Creating the design constructor
+
+The `crossover_crt()` constructor specifies the resource formulas and cost structure. In a crossover trial, the stage 2 cost depends on observations from both existing clusters (continuing into new periods) and any newly recruited clusters. We include separate cost weights for observations ($1$), new clusters ($\rho = 300$), and additional time periods ($\rho_t = 30$).
+
+```{r constructor, eval = FALSE}
+design <- crossover_crt(
+  icc      = 0.1,
+  cac      = 0.8,
+  delta    = -0.03,
+  baseline = 0.15,
+  k1       = 10:15,
+  m1       = seq(50, 100, by = 10),
+  m2       = seq(30, 100, by = 10),
+  k2       = 0:5,
+  rho      = 300,
+  rho_t    = 30,
+  family   = "binomial"
+)
+```
+
+## Exploring the design space
+
+We search over a grid of stage 1 configurations ($k_1 \in \{10, \ldots, 15\}$ clusters per arm, $m_1 \in \{50, 60, \ldots, 100\}$ individuals per cluster-period) to understand how stage 1 choices affect the adaptive design's operating characteristics.
+
+```{r design-grid, eval = FALSE}
+results <- adaptive_analysis(
+  design,
+  target_power = 0.8,
+  verbose = TRUE,
+  tol = 0.01,
+  method = "cost_cap"
+)
+```
+
+```{r summary-grid, echo = FALSE}
+cat(results_summary, sep = "\n")
+```
+
+### Plotting operating characteristics
+
+```{r plot-en, eval = FALSE}
+plot(results, type = "EN")
+```
+
+```{r plot-en-show, echo = FALSE, fig.cap = "Expected total sample size across stage 1 configurations."}
+print(p_EN)
+```
+
+```{r plot-nmax, eval = FALSE}
+plot(results, type = "Nmax")
+```
+
+```{r plot-nmax-show, echo = FALSE, fig.cap = "Maximum sample size across stage 1 configurations."}
+print(p_Nmax)
+```
+
+### Pareto analysis
+
+With a high cluster cost ($\rho = 300$), there is a strong trade-off between expected cost and maximum (worst-case) cost. Designs with more stage 1 clusters have lower expected cost (because they are more likely to stop early) but higher maximum cost (because the fixed overhead is larger).
+
+```{r pareto, eval = FALSE}
+pareto <- find_pareto(
+  results,
+  objectives = list(E_cost = "min", max_cost = "min")
+)
+
+plot(results, type = "pareto",
+     objectives = list(E_cost = "min", max_cost = "min"))
+```
+
+```{r pareto-show, echo = FALSE, fig.cap = "Pareto frontier of expected cost vs maximum cost."}
+print(p_pareto)
+```
+
+## Single-design analysis
+
+Based on the design space exploration, we fix $k_1 = 15$ clusters per arm and $m_1 = 75$ individuals per cluster-period for a detailed analysis. With $k_2 = 0$, no new clusters are recruited in stage 2 --- adaptation is limited to adjusting the sample size $m_2$ and the number of additional periods $t_2$.
+
+```{r single-design, eval = FALSE}
+design_single <- crossover_crt(
+  icc      = 0.1,
+  cac      = 0.8,
+  delta    = -0.03,
+  baseline = 0.15,
+  k1       = 15,
+  m1       = 75,
+  m2       = seq(60, 90, by = 5),
+  k2       = 0,
+  rho      = 300,
+  rho_t    = 30,
+  family   = "binomial"
+)
+
+results_single <- adaptive_analysis(
+  design_single,
+  target_power = 0.8,
+  tol = 0.01
+)
+```
+
+```{r summary-single, echo = FALSE}
+cat(results_single_summary, sep = "\n")
+```
+
+### Decision rules
+
+The decision rule maps each value of the stage 1 test statistic $z_1$ to an action. Because the treatment effect is negative (a reduction in event rate), efficacy corresponds to large negative $z_1$.
+
+```{r decision-rules, eval = FALSE}
+plot(results_single, type = "decision")
+```
+
+```{r decision-show, echo = FALSE, fig.cap = "Decision regions as a function of the stage 1 test statistic."}
+print(p_decision)
+```
+
+
+The decision rules as a data frame:
+
+```{r rules-df}
+head(rules[, c("z1", "continue", "cp", "m2", "k2")])
+```
+
+## Interim analysis
+
+At the interim, we feed in the observed $z_1$ and updated nuisance parameter estimates:
+
+```{r interim, eval = FALSE}
+interim_analysis(
+  results_single,
+  z1_obs    = -1.7,
+  theta_hat = list(icc = 0.001)
+)
+```
+
+```{r interim-show, echo = FALSE}
+cat(interim_output, sep = "\n")
+```
+
+### Sensitivity analysis
+
+The ICC and cluster autocorrelation are often uncertain at the planning stage. We evaluate three scenarios to see how the stage 2 recommendation changes:
+
+```{r sensitivity, eval = FALSE}
+sens <- interim_sensitivity(
+  results_single,
+  scenarios = list(
+    "Favourable (ICC=0.07, CAC=0.85)"    = list(icc = 0.07, cac = 0.85),
+    "Very favourable (ICC=0.03, CAC=0.9)" = list(icc = 0.03, cac = 0.9),
+    "Unfavourable (ICC=0.12, CAC=0.7)"   = list(icc = 0.12, cac = 0.7)
+  )
+)
+
+summary(sens)
+```
+
+```{r sens-summary-show, echo = FALSE}
+cat(sens_summary, sep = "\n")
+```
+
+```{r sens-plots, eval = FALSE}
+plot(sens, type = "decision")
+```
+
+```{r sens-decision-show, echo = FALSE, fig.cap = "Decision rules under different ICC/CAC scenarios."}
+print(p_sens_decision)
+```
+
+The cost plot shows the expected stage 2 cost under each scenario. We can overlay the fixed-design cost as a reference:
+
+```{r sens-cost, eval = FALSE}
+p_cost <- plot(sens, type = "cost")
+p_cost + geom_hline(yintercept = 18120, lty = 2)
+```
+
+```{r sens-cost-show, echo = FALSE, fig.cap = "Expected cost under each scenario, with fixed-design cost (dashed line)."}
+print(p_sens_cost + geom_hline(yintercept = 18120, lty = 2))
+```
+
+## Summary
+
+This vignette has demonstrated the full workflow for an adaptive crossover CRT with a binary outcome:
+
+1. **Define the crossover layout** with treatment assignment alternating across periods and arms.
+2. **Write a model builder** supporting multiple outcome families (Gaussian, binomial, Poisson) with appropriate link-scale parameter conversion.
+3. **Explore the design space** across stage 1 cluster counts and sample sizes.
+4. **Identify Pareto-optimal designs** trading off expected and maximum cost.
+5. **Examine a single design** in detail with decision rules for $t_2$ and $m_2$.
+6. **Conduct interim and sensitivity analyses** to assess robustness to ICC and CAC misspecification.
+
+The crossover design offers greater efficiency than a parallel CRT by using within-cluster comparisons, but this advantage is sensitive to the cluster autocorrelation. The adaptive framework protects against this uncertainty by allowing the trial to adjust at the interim.

@@ -8,6 +8,21 @@
 # Main Analysis Function
 # =============================================================================
 
+extract_cost_params <- function(design) {
+  spec <- design$spec
+  cost_weight_names <- unique(spec$cost_structure$weights)
+  cost_weight_names <- cost_weight_names[cost_weight_names != "1"]
+  cost_params <- list()
+  for (nm in cost_weight_names) {
+    if (nm == "rho") {
+      cost_params[[nm]] <- design$rho
+    } else if (!is.null(design$fixed_params[[nm]])) {
+      cost_params[[nm]] <- design$fixed_params[[nm]]
+    }
+  }
+  cost_params
+}
+
 #' Run adaptive trial analysis
 #'
 #' This is the main entry point for analysing adaptive CRT designs. It handles
@@ -24,15 +39,19 @@
 #' @return An adaptive_results object with methods for plotting and summarising
 #'
 #' @examples
-#' design <- parallel_crt(
-#'   icc = 0.05, delta = 0.25,
-#'   k1 = c(8, 10, 12), m1 = seq(10, 50, by = 10),
-#'   k2 = 0:4, rho = 30
-#' )
-#' results <- adaptive_analysis(design, target_power = 0.8)
-#' summary(results)
-#' plot(results, type = "EN")
 #'
+#' design <- parallel_crt(
+#'  icc = 0.05,           # Intra-cluster correlation
+#'  cac = 0.8,            # Cluster autocorrelation
+#'  delta = 0.25,         # Treatment effect
+#'  k1 = c(12:16),    # Stage 1 clusters per arm (explore these)
+#'  m1 = seq(10, 50, 5), # Stage 1 individuals per cluster
+#'  k2 = 0:4,             # Stage 2 new clusters (search space)
+#'  rho = 30              # Cluster-to-individual cost ratio
+#' )
+#'
+#' results <- adaptive_analysis(design, target_power = 0.8,
+#'                             verbose = TRUE, tol = 0.01, method = "cost_cap")
 #' @export
 adaptive_analysis <- function(design, target_power = 0.8,
                               explore = TRUE, verbose = TRUE, ...) {
@@ -67,7 +86,7 @@ adaptive_analysis.crt_design <- function(design, target_power = 0.8,
       model_fn_factory = model_fn_factory,
       fixed_params_base = design$fixed_params,
       cost_fn = cost_fn,
-      cost_params = list(rho = rho),
+      cost_params = extract_cost_params(design),
       resource_vars = spec$stage2_params,
       sample_size_fn = sample_size_fn,
       verbose = verbose,
@@ -95,7 +114,7 @@ adaptive_analysis.crt_design <- function(design, target_power = 0.8,
       model_fn = model_fn_factory(),
       fixed_params = fixed_params,
       cost_fn = cost_fn,
-      cost_params = list(rho = rho),
+      cost_params = extract_cost_params(design),
       resource_vars = spec$stage2_params,
       verbose = verbose,
       ...
@@ -225,6 +244,35 @@ summary.adaptive_results <- function(object, ...) {
   }
 }
 
+#' Plot results of adaptive design analysis
+#'
+#' @param x An adaptive design analysis
+#' @param type One of "EN", "Nmax", "power", "probabilities",
+#' "decision", "pareto", or "all"
+#' @param objectives If the type is "pareto" then these are the optimisation
+#' objectives. The argument should be a list with the name of the variable and
+#' either 'min' and 'max', for example `list(E_cost = "min", max_cost = "min")`
+#' @param design_index If decision rules is the type then which design to show
+#' @examples
+#' # Define the design in ONE call - no custom functions needed!
+#' design <- parallel_crt(
+#'  icc = 0.05,           # Intra-cluster correlation
+#'  cac = 0.8,            # Cluster autocorrelation
+#'  delta = 0.25,         # Treatment effect
+#'  k1 = c(12:16),    # Stage 1 clusters per arm (explore these)
+#'  m1 = seq(10, 50, 5), # Stage 1 individuals per cluster
+#'  k2 = 0:4,             # Stage 2 new clusters (search space)
+#'  rho = 30              # Cluster-to-individual cost ratio
+#')
+#'
+#' # Run the analysis - ONE function call
+#' results <- adaptive_analysis(design, target_power = 0.8,
+#'                             verbose = TRUE, tol = 0.01, method = "cost_cap")
+#' # Plot results
+#' p1 <- plot(results, type = "EN")      # Expected sample size
+#' p2 <- plot(results, type = "Nmax")    # Maximum sample size
+#' p3 <- plot(results, type = "pareto", objectives = list(E_cost = "min", max_cost = "min") )
+#'
 #' @export
 plot.adaptive_results <- function(x, type = c("EN", "Nmax", "power", "probabilities",
                                               "decision", "pareto", "all"),
@@ -276,6 +324,21 @@ plot.adaptive_results <- function(x, type = c("EN", "Nmax", "power", "probabilit
 #' @param ... Additional arguments passed to find_constrained_pareto
 #'
 #' @return A data frame of Pareto-optimal designs
+#' @examples
+#' design <- parallel_crt(
+#'  icc = 0.05,           # Intra-cluster correlation
+#'  cac = 0.8,            # Cluster autocorrelation
+#'  delta = 0.25,         # Treatment effect
+#'  k1 = c(12:16),    # Stage 1 clusters per arm (explore these)
+#'  m1 = seq(10, 50, 5), # Stage 1 individuals per cluster
+#'  k2 = 0:4,             # Stage 2 new clusters (search space)
+#'  rho = 30              # Cluster-to-individual cost ratio
+#'  )
+#'
+#'  # Run the analysis - ONE function call
+#'  results <- adaptive_analysis(design, target_power = 0.8,
+#'                               verbose = TRUE, tol = 0.01, method = "cost_cap")
+#'  pareto <- find_pareto(results, objectives = list(E_cost = "min", max_cost = "min"))
 #' @export
 find_pareto <- function(results,
                         objectives = list(E_N = "min", N_max = "min"),
@@ -362,7 +425,7 @@ compare_to_fixed <- function(results,
     model_fn_factory = function() fixed_model_fn,
     fixed_params_base = design$fixed_params,
     cost_fn = fixed_cost_fn,
-    cost_params = list(rho = rho),
+    cost_params = extract_cost_params(design),
     verbose = verbose
   )
 
@@ -885,9 +948,12 @@ get_decision_rules <- function(results, design_index = 1, z1_values = NULL) {
 #' @param z1_obs Observed stage 1 test statistic
 #' @param theta_hat Named list of updated parameter estimates (e.g. list(icc = 0.03, sigma2 = 1.2))
 #' @param delta Treatment effect for conditional power (NULL = use planned value)
+#' @param recalibrate Logical indicating whether to recalibrate the lambda parameter
+#' @param target_power The target power
 #' @param verbose Print details
 #'
 #' @return An interim_result object with recommendation and conditional power
+#' @export
 interim_analysis <- function(planned, z1_obs, theta_hat = list(),
                              delta = NULL, recalibrate = TRUE,
                              target_power = 0.8, verbose = TRUE) {
@@ -967,7 +1033,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
       model_fn = model_fn,
       fixed_params = fixed_params,
       cost_fn = cost_fn,
-      cost_params = list(rho = rho),
+      cost_params = extract_cost_params(design),
       resource_vars = resource_vars,
       method = method,
       verbose = verbose,
@@ -1178,14 +1244,14 @@ print.interim_result <- function(x, ...) {
 #' @param show_density Overlay density of z1 under H1
 #'
 #' @return A ggplot or list of ggplots
+#' @export
 interim_sensitivity <- function(planned,
                                 scenarios,
                                 delta = NULL,
                                 z1_range = c(-3, 4),
                                 n_z1 = 200,
-                                recalibrate = TRUE,
-                                target_power = 0.8,
-                                ...) {
+                                include_planned = TRUE,
+                                target_power = 0.8) {
 
   if (!inherits(planned, "adaptive_results")) {
     stop("planned must be an adaptive_results object")
@@ -1204,7 +1270,7 @@ interim_sensitivity <- function(planned,
   b1_planned <- r$results$params$b1
   mu1_planned <- r$results$params$mu1
   method <- r$method %||% "lambda"
-
+  cost_params_full <- r$results$params$cost_params %||% list(rho = rho)
   if (is.null(delta)) delta <- b1_planned
 
   z1_grid <- seq(z1_range[1], z1_range[2], length.out = n_z1)
@@ -1216,6 +1282,39 @@ interim_sensitivity <- function(planned,
   cost_fn <- generate_cost_fn(spec, "stage2")
   cost_fn_total <- generate_cost_fn(spec, "total")
   resource_vars <- spec$stage2_params
+  # === Include planned design as a scenario (no recalibration) ===
+  recalibrate <- TRUE
+  planned_result <- NULL
+
+  if (include_planned && !is.null(r$results)) {
+    opt_planned <- r$results$quadrature$optimal_designs
+
+    # Add cost column if missing
+    if (!"cost" %in% names(opt_planned)) {
+      ms <- r$results$models$summaries
+      opt_planned$cost <- NA_real_
+      cont <- which(opt_planned$continue)
+      cost_s1_planned <- do.call(cost_fn_total, c(list(r$results$models$list[[1]]),
+                                                  cost_params_full)) -
+        do.call(cost_fn, c(list(r$results$models$list[[1]]),
+                           cost_params_full))
+      opt_planned$cost[cont] <- cost_s1_planned + ms$raw_cost[opt_planned$design_idx[cont]]
+      opt_planned$cost[!opt_planned$continue] <- cost_s1_planned
+    }
+
+    planned_result <- list(
+      scenario = "Planned",
+      theta = list(),
+      optimal_designs = opt_planned,
+      raw_compatible = r$results,
+      lambda = r$lambda,
+      cost_cap = r$cost_cap,
+      power = r$power,
+      converged = TRUE
+    )
+  }
+
+
 
   # === Evaluate each scenario ===
   scenario_results <- lapply(names(scenarios), function(sc_name) {
@@ -1238,16 +1337,15 @@ interim_sensitivity <- function(planned,
         model_fn = model_fn,
         fixed_params = fixed_params,
         cost_fn = cost_fn,
-        cost_params = list(rho = rho),
+        cost_params = extract_cost_params(design),
         resource_vars = resource_vars,
         method = method,
         z1_range = z1_range,
         n_quad = n_z1,
-        verbose = TRUE,
+        verbose = FALSE,
         w1_override = w1_ref,
         efficacy_override = efficacy_boundary,
-        t_crit_override = t_crit,
-        ...
+        t_crit_override = t_crit
       )
 
       # The results are already in plot_decision_rules-compatible format
@@ -1256,6 +1354,20 @@ interim_sensitivity <- function(planned,
       # Build decisions data frame from optimal_designs
       opt <- recal$results$quadrature$optimal_designs
 
+      # Compute total cost (stage 1 + stage 2)
+      ms <- recal$results$models$summaries
+      mod1 <- recal$results$models$list[[1]]
+      cost_params_full <- extract_cost_params(design)
+      cost_s1 <- do.call(cost_fn_total, c(list(mod1), cost_params_full)) -
+        do.call(cost_fn, c(list(mod1), cost_params_full))
+
+      opt$cost <- NA_real_
+      cont <- which(opt$continue)
+      opt$cost[cont] <- cost_s1 + ms$raw_cost[opt$design_idx[cont]]
+      # Stopped trials still incur stage 1 cost
+      opt$cost[!opt$continue] <- cost_s1
+      raw_compatible <- recal$results
+      raw_compatible$quadrature$optimal_designs <- opt
       list(
         scenario = sc_name,
         theta = theta_hat,
@@ -1280,7 +1392,9 @@ interim_sensitivity <- function(planned,
       mu1_scenario <- delta * sqrt(I1_eff_scenario)
 
       mod1 <- model_list[[1]]
-      cost_s1 <- cost_fn_total(mod1, rho) - cost_fn(mod1, rho)
+      cost_params_full <- extract_cost_params(design)
+      cost_s1 <- do.call(cost_fn_total, c(list(mod1), cost_params_full)) -
+        do.call(cost_fn, c(list(mod1), cost_params_full))
 
       # CP matrix: n_z1 x n_designs
       cp_mat <- sapply(seq_len(n_designs), function(j) {
@@ -1380,6 +1494,13 @@ interim_sensitivity <- function(planned,
   })
   names(scenario_results) <- names(scenarios)
 
+  # Prepend planned result
+  if (!is.null(planned_result)) {
+    scenario_results <- c(list(Planned = planned_result), scenario_results)
+  }
+
+  all_scenario_names <- names(scenario_results)
+
   # --- Build combined decisions data frame ---
   df <- do.call(rbind, lapply(scenario_results, function(sr) {
     opt <- sr$optimal_designs
@@ -1391,12 +1512,12 @@ interim_sensitivity <- function(planned,
     )
     opt
   }))
-  df$scenario <- factor(df$scenario, levels = names(scenarios))
+  df$scenario <- factor(df$scenario, levels = all_scenario_names)
 
   structure(
     list(
       decisions = df,
-      scenarios = scenarios,
+      scenarios = c(list(Planned = list()), scenarios),
       scenario_results = scenario_results,
       planned = list(
         w1_ref = w1_ref,

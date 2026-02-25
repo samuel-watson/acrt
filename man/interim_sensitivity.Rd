@@ -10,8 +10,8 @@ interim_sensitivity(
   delta = NULL,
   z1_range = c(-3, 4),
   n_z1 = 200,
-  type = c("cost", "cp", "design", "all"),
-  show_density = TRUE
+  include_planned = TRUE,
+  target_power = 0.8
 )
 }
 \arguments{

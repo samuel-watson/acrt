@@ -1,0 +1,536 @@
+---
+title: "Custom Adaptive Stepped-Wedge Trial Design"
+author: "Sam Watson"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Custom Adaptive Stepped-Wedge Trial Design}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center"
+)
+library(acrt)
+library(ggplot2)
+library(Matrix)
+
+# Load precomputed results for expensive operations
+load("sw_vignette_precomputed.rda")
+```
+
+## Introduction
+
+The built-in design constructors in `adaptiveCRT` --- `parallel_crt()`, `crossover_crt()`, and `stepped_wedge_crt()` --- cover a range of standard trial layouts. However, many real trials require bespoke designs that don't fit neatly into these templates. This vignette walks through a complete example of building a **custom adaptive stepped-wedge cluster randomised trial** with a binomial outcome, demonstrating:
+
+- How to write a custom `model_builder` function
+- How to wrap it in a design constructor
+- How to run the adaptive analysis across a grid of stage 1 designs
+- How to use Pareto analysis to compare competing designs
+- How to conduct interim analyses and sensitivity checks
+- How to visualise the stepped-wedge trial layout
+
+The trial we consider has $k = 11$ clusters observed across several time periods with a binary outcome. Clusters cross over from control to intervention in a staggered fashion. At an interim analysis after $t_1$ periods, we may adapt the number of additional periods ($t_2$), the rollout rate ($r$), and the cluster-period sample size ($m_2$).
+
+## The stepped-wedge layout
+
+In a standard stepped-wedge design, all clusters begin under control and sequentially cross to the intervention. Our design divides clusters into three groups:
+
+1. **Early switchers** (clusters $1, \ldots, t_1 - 1$): these have already crossed over by the end of stage 1 and remain on intervention throughout stage 2.
+2. **Middle clusters** (clusters $t_1, \ldots, k - t_1$): these are mid-crossover. In stage 2, the rate $r$ governs how quickly they switch. Setting $r = 0$ freezes them in place; $r = 1$ continues the standard wedge.
+3. **Late clusters** (already on control through stage 1): they begin switching only in stage 2.
+
+The adaptive element is that, after observing the stage 1 data, we choose $t_2$, $r$, and $m_2$ to balance power and cost.
+
+We can visualise this layout with a helper function. First, a function to generate the design data frame:
+
+```{r generate-sw-design}
+generate_sw_design <- function(k, t1, t2, r) {
+  cl_mid <- (k - t1 + 1) / 2
+
+  # Stage 1: standard wedge
+  df1 <- glmmrBase::nelder(as.formula(paste0("~ cl(", k, ") * t(", t1, ")")))
+  df1$int <- as.integer(df1$t > df1$cl)
+
+  # Stage 2: middle clusters continue crossing at rate r
+  df2 <- glmmrBase::nelder(as.formula(paste0("~ cl(", (k - t1 + 1), ") * t(", t2, ")")))
+  if (r < 1e-6) {
+    df2$int <- as.integer(df2$cl <= cl_mid)
+  } else {
+    df2$int <- as.integer(df2$t > cl_mid + (df2$cl - cl_mid) / r)
+  }
+  df2$t <- df2$t + t1
+  df2$cl <- df2$cl + (t1 - 1)
+
+  # Stage 2: early switchers remain on intervention
+  df3 <- glmmrBase::nelder(as.formula(paste0("~ cl(", t1 - 1, ") * t(", t2, ")")))
+  df3$int <- 1L
+  df3$t <- df3$t + t1
+
+  rbind(df1, df2, df3)
+}
+```
+
+And a plotting function using `ggplot2`:
+
+```{r plot-sw-fn}
+plot_sw_design <- function(df, t1 = NULL, title = NULL, show_legend = TRUE) {
+
+  `%||%` <- function(x, y) if (is.null(x)) y else x
+
+  df$cl  <- factor(df$cl, levels = sort(unique(df$cl), decreasing = TRUE))
+  df$t   <- factor(df$t, levels = sort(unique(df$t)))
+  df$int <- factor(df$int, levels = c(0, 1), labels = c("Control", "Intervention"))
+
+  p <- ggplot(df, aes(x = t, y = cl, fill = int)) +
+    geom_tile(colour = "white", linewidth = 0.5) +
+    scale_fill_manual(
+      values = c("Control" = "#f0f0f0", "Intervention" = "#2a9d8f"),
+      name = "Status"
+    ) +
+    labs(
+      x = "Time period", y = "Cluster",
+      title = title %||% "Stepped-Wedge Trial Design"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid   = element_blank(),
+      axis.text    = element_text(size = 10),
+      axis.title   = element_text(size = 11, face = "bold"),
+      legend.position = if (show_legend) "right" else "none",
+      plot.title   = element_text(size = 13, face = "bold", hjust = 0.5)
+    )
+
+  if (!is.null(t1)) {
+    p <- p +
+      geom_vline(
+        xintercept = t1 + 0.5, colour = "#e76f51",
+        linewidth = 1.2, linetype = "dashed"
+      ) +
+      annotate(
+        "text", x = t1 + 0.5, y = length(unique(df$cl)) + 0.7,
+        label = "Interim", colour = "#e76f51",
+        fontface = "bold", size = 3.5, hjust = 0.5
+      )
+  }
+
+  p
+}
+```
+
+Here is one example layout with $k = 11$ clusters, $t_1 = 4$ stage 1 periods, $t_2 = 5$ additional periods, and a rollout rate of $r = 1$:
+
+```{r plot-single-design, fig.height = 4}
+df_example <- generate_sw_design(k = 11, t1 = 4, t2 = 5, r = 1)
+plot_sw_design(df_example, t1 = 4, title = "SW Design: k=11, t1=4, t2=5, r=1.0")
+```
+
+## Writing the model builder
+
+The model builder is the core function that computes the efficient information decomposition for a given combination of stage 1 and stage 2 parameters. It receives `design_params` (a single-row data frame of stage 2 parameters) and `fixed_params` (a list containing stage 1 parameters, variance components, and a model cache). It must return a list including `I1_eff`, `I2_eff`, `I_eff`, `w1`, `w2`, and `b1`.
+
+Because this is a binomial outcome, we need helper functions to convert between the probability scale and the logit scale:
+
+```{r helpers}
+icc_var_par <- function(baseline, icc) {
+  v1 <- baseline * (1 - baseline)
+  v2 <- v1 * (icc / (1 - icc))
+  tausq <- v2 / (baseline^2 / ((1 + exp(log(baseline / (1 - baseline))))^2))
+  tausq
+}
+
+to_logit_scale <- function(baseline, eff_size) {
+  b0 <- log(baseline / (1 - baseline))
+  b1 <- log((baseline + eff_size) / (1 - baseline - eff_size)) - b0
+  c(b0, b1)
+}
+```
+
+Now the model builder itself. Note the use of caching: since this function is called many times during the optimisation, we only rebuild the `glmmrBase::Model` object when the cluster structure changes (i.e. when `t2` or `r` changes), and update weights when only $m_2$ changes.
+
+```{r model-builder, eval = FALSE}
+sw_model_builder <- function(design_params, fixed_params) {
+
+  cache <- fixed_params$cache
+
+  # --- Extract parameters ---
+  k   <- fixed_params$k
+  t1  <- fixed_params$t1
+  t2  <- design_params$t2
+  r   <- design_params$r
+  m1  <- fixed_params$m1
+  m2  <- design_params$m2
+  ar  <- fixed_params$cac
+
+  # --- Generate design data frame ---
+  generate_sw <- function(k, t1, t2, r) {
+    cl_mid <- (k - t1 + 1) / 2
+    df1 <- glmmrBase::nelder(as.formula(paste0("~ cl(", k, ") * t(", t1, ")")))
+    df1$int <- as.integer(df1$t > df1$cl)
+
+    df2 <- glmmrBase::nelder(as.formula(paste0("~ cl(", (k - t1 + 1), ") * t(", t2, ")")))
+    df3 <- glmmrBase::nelder(as.formula(paste0("~ cl(", t1 - 1, ") * t(", t2, ")")))
+    df3$int <- 1L
+    df3$t <- df3$t + t1
+
+    if (r < 1e-6) {
+      df2$int <- as.integer(df2$cl <= cl_mid)
+    } else {
+      df2$int <- as.integer(df2$t > cl_mid + (df2$cl - cl_mid) / r)
+    }
+    df2$t <- df2$t + t1
+    df2$cl <- df2$cl + (t1 - 1)
+
+    rbind(df1, df2, df3)
+  }
+
+  df <- generate_sw(k, t1, t2, r)
+  df$n <- m1
+  df[df$t > t1, "n"] <- m2
+
+  # --- Convert to logit scale ---
+  beta <- to_logit_scale(fixed_params$baseline, fixed_params$delta)
+  v1   <- icc_var_par(fixed_params$baseline, fixed_params$icc)
+
+  T_total <- t1 + t2
+
+  # --- Build or update model (with caching) ---
+  cache_key <- paste(k, t1, t2, r, sep = "_")
+
+  if (is.null(cache$mod) || cache$cache_key != cache_key) {
+    cache$mod <- glmmrBase::Model$new(
+      ~ int + factor(t) + (1|gr(cl)*ar0(t)),
+      data = df,
+      family = binomial(),
+      mean = c(beta, rep(0, T_total - 1)),
+      covariance = c(v1, ar),
+      trials = df$n
+    )
+    cache$cache_key <- cache_key
+  } else {
+    glmmrBase:::Model__set_trials(cache$mod$.__enclos_env__$private$ptr, df$n)
+    cache$mod$update_parameters(cov.pars = c(v1, ar))
+  }
+
+  # --- Compute marginal covariance and efficient information ---
+  n1 <- sum(df$t <= t1)
+  n2 <- nrow(df) - n1
+
+  X <- cache$mod$mean$X
+  D <- cache$mod$covariance$D
+  Z <- cache$mod$covariance$Z
+
+  Z_sp <- Matrix(Z, sparse = TRUE)
+  D_sp <- Matrix(D, sparse = TRUE)
+  S <- Diagonal(x = 1 / cache$mod$w_matrix()) + Z_sp %*% tcrossprod(D_sp, Z_sp)
+  V <- as.matrix(S)
+
+  idx1 <- which(df$t <= t1)
+  idx2 <- which(df$t > t1)
+
+  eff <- efficient_score_decomposition(X, V, idx1, idx2, j = 2)
+
+  list(
+    I1_eff  = eff$I1_eff,
+    I2_eff  = eff$I2_eff,
+    I_eff   = eff$I_eff,
+    w1      = sqrt(eff$I1_eff / eff$I_eff),
+    w2      = sqrt(eff$I2_eff / eff$I_eff),
+    b1      = beta[2],
+    n1 = n1, n2 = n2,
+    m1 = m1, m2 = m2,
+    N1_total = k * t1 * m1,
+    N2_total = k * t2 * m2,
+    N_total  = k * t1 * m1 + k * t2 * m2,
+    k = k, t1 = t1, t2 = t2, r = r,
+    T_total = T_total
+  )
+}
+```
+
+## Creating the design constructor
+
+We wrap everything into a constructor function `sw_crt()` that creates a `crt_design` object. This specifies the stage 1 and stage 2 parameter grids, the resource formulas for cost accounting, and the model builder.
+
+```{r constructor, eval = FALSE}
+sw_crt <- function(icc, cac = 0.8, delta, baseline,
+                   k, m1, t1,
+                   t2 = 1:10,
+                   r = seq(0, 1.2, by = 0.2),
+                   m2 = seq(20, 100, by = 20),
+                   rho = 30) {
+
+  spec <- crt_design_spec(
+    stage1_params  = c("k", "t1", "m1"),
+    stage2_params  = c("t2", "r", "m2"),
+    resources = list(
+      n_s1       = ~ k * t1 * m1,
+      n_s2       = ~ k * t2 * m2,
+      periods_s1 = ~ k * t1,
+      periods_s2 = ~ k * t2
+    ),
+    cost_structure = list(
+      weights = c(n = 1, periods = "rho"),
+      stage2_resources = c("n_s2", "periods_s2")
+    ),
+    model_builder = sw_model_builder,
+    n_arms = 1,
+    design_type = "stepped_wedge"
+  )
+
+  structure(
+    list(
+      spec = spec,
+      fixed_params = list(
+        icc = icc, cac = cac, delta = delta,
+        baseline = baseline, k = k
+      ),
+      stage1_grid    = expand.grid(t1 = t1, m1 = m1),
+      stage2_grid_fn = function(s1) expand.grid(t2 = t2, r = r, m2 = m2),
+      rho = rho
+    ),
+    class = c("sw_crt", "crt_design")
+  )
+}
+```
+
+## Exploring the design space
+
+We first search over a grid of stage 1 configurations ($t_1 \in \{3,4,5,6\}$, $m_1 \in \{10,20,\ldots,60\}$) to understand how stage 1 choices affect the adaptive design's operating characteristics.
+
+```{r design-grid, eval = FALSE}
+design <- sw_crt(
+  icc      = 0.06,
+  cac      = 0.8,
+  delta    = -0.07,
+  baseline = 0.2,
+  k        = 11,
+  t1       = 3:6,
+  m1       = seq(10, 60, by = 10),
+  rho      = 15
+)
+
+results <- adaptive_analysis(
+  design,
+  target_power = 0.8,
+  verbose = TRUE,
+  tol = 0.01,
+  method = "cost_cap"
+)
+```
+
+The `summary()` method prints a table of results for each stage 1 configuration, including the calibrated $\lambda$, expected sample size, maximum sample size, expected cost, and decision probabilities.
+
+```{r summary-grid, echo = FALSE}
+cat(results_summary, sep = "\n")
+```
+
+### Plotting operating characteristics
+
+Several plot types are available for comparing designs across the grid:
+
+```{r plot-en, eval = FALSE}
+plot(results, type = "EN")
+```
+
+```{r plot-en-show, echo = FALSE, fig.cap = "Expected total sample size across stage 1 configurations."}
+print(p_EN)
+```
+
+```{r plot-nmax, eval = FALSE}
+plot(results, type = "Nmax")
+```
+
+```{r plot-nmax-show, echo = FALSE, fig.cap = "Maximum sample size across stage 1 configurations."}
+print(p_Nmax)
+```
+
+### Pareto analysis
+
+In practice, we often face trade-offs: a design with low expected cost may have a high maximum cost, or vice versa. The `find_pareto()` function identifies the Pareto frontier across two or more objectives.
+
+```{r pareto, eval = FALSE}
+pareto <- find_pareto(
+  results,
+  objectives = list(E_cost = "min", max_cost = "min")
+)
+
+plot(results, type = "pareto",
+     objectives = list(E_cost = "min", max_cost = "min"))
+```
+
+```{r pareto-show, echo = FALSE, fig.cap = "Pareto frontier of expected cost vs maximum cost."}
+print(p_pareto)
+```
+
+## Single-design analysis
+
+Once a promising stage 1 configuration has been identified, we can fix it and examine the adaptive operating characteristics in detail. Here we use $t_1 = 5$ and $m_1 = 30$:
+
+```{r single-design, eval = FALSE}
+design_single <- sw_crt(
+  icc      = 0.06,
+  cac      = 0.8,
+  delta    = -0.07,
+  baseline = 0.2,
+  k        = 11,
+  t1       = 5,
+  m1       = 30,
+  rho      = 15
+)
+
+results_single <- adaptive_analysis(
+  design_single,
+  target_power = 0.8,
+  tol = 0.01,
+  method = "cost_cap"
+)
+```
+
+### Decision rules
+
+The decision rule maps each possible value of the stage 1 test statistic $z_1$ to an action: stop for efficacy, stop for futility, or continue with a specific stage 2 design. Because the treatment effect here is negative (a reduction in the outcome rate), efficacy corresponds to large negative $z_1$.
+
+```{r decision-rules, eval = FALSE}
+plot(results_single, type = "decision")
+```
+
+```{r decision-show, echo = FALSE, fig.cap = "Decision regions as a function of the stage 1 test statistic."}
+print(p_decision)
+```
+
+The decision rules can also be extracted as a data frame:
+
+```{r rules-df}
+head(rules[, c("z1", "continue", "cp", "m2", "t2", "r")])
+```
+
+## Interim analysis
+
+At the interim, the observed $z_1$ and any updated nuisance parameter estimates are fed into `interim_analysis()` to obtain the recommended stage 2 design.
+
+```{r interim, eval = FALSE}
+interim_analysis(
+  results_single,
+  z1_obs    = -1.7,
+  theta_hat = list(icc = 0.001)
+)
+```
+
+```{r interim-show, echo = FALSE}
+cat(interim_output, sep = "\n")
+```
+
+### Sensitivity analysis
+
+We may not be confident in the nuisance parameter estimates. The `interim_sensitivity()` function evaluates the adaptive design under several scenarios, showing how the stage 2 recommendation changes:
+
+```{r sensitivity, eval = FALSE}
+sens <- interim_sensitivity(
+  results_single,
+  scenarios = list(
+    "Planned (ICC = 0.06)"         = list(icc = 0.06),
+    "Favourable (ICC = 0.02)"      = list(icc = 0.02),
+    "Very favourable (ICC = 0.01)" = list(icc = 0.01)
+  )
+)
+
+summary(sens)
+```
+
+```{r sens-summary-show, echo = FALSE}
+cat(sens_summary, sep = "\n")
+```
+
+```{r sens-plots, eval = FALSE}
+plot(sens, type = "decision")
+plot(sens, type = "cp")
+plot(sens, type = "all")
+```
+
+```{r sens-decision-show, echo = FALSE, fig.cap = "Decision rules under different ICC scenarios."}
+print(p_sens_decision)
+```
+
+```{r sens-cp-show, echo = FALSE, fig.cap = "Conditional power curves under different ICC scenarios."}
+print(p_sens_cp)
+```
+
+```{r sens-all-show, echo = FALSE, fig.cap = "Combined sensitivity analysis panel."}
+print(p_sens_all)
+```
+
+## Comparing stage 2 adaptations visually
+
+A useful way to communicate the adaptive design to a clinical audience is to show what the trial layout would look like under different interim outcomes. Suppose the three ICC scenarios from the sensitivity analysis lead to different stage 2 designs:
+
+```{r compare-layouts, fig.height = 4, fig.width = 10}
+plot_sw_designs_compare <- function(designs, t1 = NULL) {
+  df_list <- lapply(names(designs), function(nm) {
+    d <- designs[[nm]]
+    d$design <- nm
+    d
+  })
+  df_all <- do.call(rbind, df_list)
+
+  df_all$cl  <- factor(df_all$cl, levels = sort(unique(df_all$cl), decreasing = TRUE))
+  df_all$t   <- factor(df_all$t, levels = sort(unique(df_all$t)))
+  df_all$int_label <- factor(df_all$int, levels = c(0, 1),
+                             labels = c("Control", "Intervention"))
+  df_all$design <- factor(df_all$design, levels = names(designs))
+
+  p <- ggplot(df_all, aes(x = t, y = cl, fill = int_label)) +
+    geom_tile(colour = "white", linewidth = 0.5) +
+    scale_fill_manual(
+      values = c("Control" = "#e8e8e8", "Intervention" = "#2a9d8f"),
+      name = "Status"
+    ) +
+    facet_wrap(~ design, ncol = length(designs)) +
+    labs(x = "Time period", y = "Cluster") +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid = element_blank(),
+      strip.text = element_text(face = "bold", size = 11),
+      legend.position = "bottom"
+    )
+
+  if (!is.null(t1)) {
+    p <- p + geom_vline(
+      xintercept = t1 + 0.5, colour = "#e76f51",
+      linewidth = 1, linetype = "dashed"
+    )
+  }
+
+  p
+}
+
+designs <- list(
+  "ICC = 0.06 (t2=7, r=1.05)" = generate_sw_design(11, 5, 7, r = 1.05),
+  "ICC = 0.02 (t2=3, r=0.70)" = generate_sw_design(11, 5, 3, r = 0.7),
+  "ICC = 0.01 (t2=1, r=0.00)" = generate_sw_design(11, 5, 1, r = 0.0)
+)
+
+plot_sw_designs_compare(designs, t1 = 5)
+```
+
+Under the planned ICC of 0.06, the trial extends by 7 additional periods with rapid rollout. If the ICC turns out to be much smaller than expected, the trial can stop after just one additional period --- a substantial saving in time and resources, while still maintaining the target power.
+
+## Summary
+
+This vignette has demonstrated the full workflow for building a custom adaptive stepped-wedge design:
+
+1. **Define the trial layout** with a design-generating function.
+2. **Write a model builder** that computes efficient information via `efficient_score_decomposition()`, using model caching for performance.
+3. **Wrap it in a constructor** using `crt_design_spec()` to specify resources and cost structures.
+4. **Explore the design space** across stage 1 configurations with `adaptive_analysis()` and `find_pareto()`.
+5. **Examine a single design** in detail with decision rule plots and tables.
+6. **Conduct interim analyses** with `interim_analysis()` and assess robustness with `interim_sensitivity()`.
+7. **Communicate the design** to collaborators with layout visualisations showing how the trial adapts.
+
+For further details on the custom design interface, run `custom_design_help()` in R, or see the package documentation.

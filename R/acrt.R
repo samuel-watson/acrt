@@ -41,26 +41,12 @@
 # =============================================================================
 
 .pkg_info <- list(
-  name = "adaptiveCRT",
+  name = "acrt",
   version = "0.2.0",
   description = "Adaptive Cluster Randomised Trial Design",
   author = "Sam Watson",
   depends = c("glmmrBase", "Matrix", "statmod", "ggplot2", "scales")
 )
-
-#' Print package information
-#' @export
-adaptive_crt_info <- function() {
-  cat(sprintf("%s v%s\n", .pkg_info$name, .pkg_info$version))
-  cat(.pkg_info$description, "\n\n")
-  cat("Available design constructors:\n")
-  cat("  parallel_crt()      - Parallel cluster trial\n")
-  cat("  crossover_crt()     - Crossover cluster trial\n")
-  cat("Main functions:\n")
-  cat("  adaptive_analysis() - Run analysis\n")
-  cat("  find_pareto()       - Find Pareto frontier\n")
-  cat("  compare_to_fixed()  - Compare to fixed design\n")
-}
 
 # =============================================================================
 # Convenience Re-exports
@@ -72,18 +58,13 @@ adaptive_crt_info <- function() {
 #' @export
 parallel <- parallel_crt
 
-#' @rdname crossover_crt
-#' @export
-crossover <- crossover_crt
-
 # =============================================================================
 # Startup Message
 # =============================================================================
 
 .onAttach <- function(libname, pkgname) {
   packageStartupMessage(sprintf("adaptiveCRT v%s loaded", .pkg_info$version))
-  packageStartupMessage("Use adaptive_crt_info() for help")
+  packageStartupMessage("Vignettes demonstrate use of the package:\nvignette('adaptive_stepped_wedge', package = 'acrt')\nvignette('adaptive_crossover', package = 'acrt')")
 }
 
-cat("adaptiveCRT framework loaded\n")
-cat("Use adaptive_crt_info() for available functions\n")
+cat("adaptive CRT framework loaded\n")
