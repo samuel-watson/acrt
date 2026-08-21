@@ -187,6 +187,10 @@ print.adaptive_results <- function(x, ...) {
       cat(sprintf("Efficacy boundary: |z1| > %.3f\n",
                   x$raw$results$params$efficacy_boundary))
     }
+    if (!is.null(x$raw$results$params$c2)) {
+      cat(sprintf("Stage 2 boundary:  |Z|  > %.3f\n",
+                  x$raw$results$params$c2))
+    }
   }
 
   cat("\nUse summary() for detailed results, plot() for visualisation.\n")
@@ -976,6 +980,8 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   w1_ref <- r$results$params$w1_ref
   efficacy_boundary <- r$results$params$efficacy_boundary
   t_crit <- r$results$params$t_crit %||% 1.96
+  c2 <- r$results$params$c2 %||%
+    calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
   b1_planned <- r$results$params$b1
   method <- r$method %||% "lambda"
 
@@ -986,6 +992,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     cat(sprintf("Observed z1 = %.3f\n", z1_obs))
     cat(sprintf("Pre-planned weights: w1 = %.4f\n", w1_ref))
     cat(sprintf("Efficacy boundary: |z1| > %.3f\n", efficacy_boundary))
+    cat(sprintf("Stage 2 boundary:  |Z|  > %.3f\n", c2))
     if (length(theta_hat) > 0) {
       cat("Updated parameters:\n")
       for (nm in names(theta_hat)) {
@@ -1002,7 +1009,9 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
       z1 = z1_obs,
       w1_ref = w1_ref,
       weighted_statistic = w1_ref * z1_obs,
-      critical_value = t_crit,
+      critical_value = c2,
+      c2 = c2,
+      efficacy_boundary = efficacy_boundary,
       stage2_design = NULL,
       conditional_power = NA,
       message = sprintf("z1 = %.3f exceeds efficacy boundary %.3f",
@@ -1039,7 +1048,8 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
       verbose = verbose,
       w1_override = w1_ref,
       efficacy_override = efficacy_boundary,
-      t_crit_override = t_crit
+      t_crit_override = t_crit,
+      c2_override = c2
     )
 
     lambda_use <- recal$lambda
@@ -1070,8 +1080,8 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     I2_eff_j <- mod$I2_eff
 
     ncp <- delta * sqrt(I2_eff_j)
-    upper_thresh <- (t_crit - w1_ref * z1_obs) / w2_ref
-    lower_thresh <- (-t_crit - w1_ref * z1_obs) / w2_ref
+    upper_thresh <- (c2 - w1_ref * z1_obs) / w2_ref
+    lower_thresh <- (-c2 - w1_ref * z1_obs) / w2_ref
 
     cp_vec[j] <- pnorm(ncp - upper_thresh) + pnorm(lower_thresh - ncp)
     I2_eff_vec[j] <- I2_eff_j
@@ -1178,6 +1188,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     conditional_power = best_cp,
     stage2_cost = cost_vec[best_idx],
     I2_eff_updated = I2_eff_vec[best_idx],
+    c2 = c2,
     theta_hat = theta_hat,
     delta = delta,
     recalibrated = recalibrate,
@@ -1185,6 +1196,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     planned = list(
       w1_ref = w1_ref,
       efficacy_boundary = efficacy_boundary,
+      c2 = c2,
       b1 = b1_planned
     ),
     message = "Continue to stage 2"
@@ -1197,6 +1209,9 @@ print.interim_result <- function(x, ...) {
   cat("Interim Analysis Result\n")
   cat(sprintf("  Decision: %s\n", toupper(gsub("_", " ", x$decision))))
   cat(sprintf("  z1 observed: %.3f\n", x$z1))
+  if (!is.null(x$c2)) {
+    cat(sprintf("  Stage 2 boundary: |Z| > %.3f\n", x$c2))
+  }
 
   if (x$decision == "efficacy_stop") {
     cat(sprintf("  Weighted statistic: %.3f (critical value: %.3f)\n",
@@ -1267,6 +1282,8 @@ interim_sensitivity <- function(planned,
   w2_ref <- sqrt(1 - w1_ref^2)
   efficacy_boundary <- r$results$params$efficacy_boundary
   t_crit <- r$results$params$t_crit %||% 1.96
+  c2 <- r$results$params$c2 %||%
+    calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
   b1_planned <- r$results$params$b1
   mu1_planned <- r$results$params$mu1
   method <- r$method %||% "lambda"
@@ -1345,7 +1362,8 @@ interim_sensitivity <- function(planned,
         verbose = FALSE,
         w1_override = w1_ref,
         efficacy_override = efficacy_boundary,
-        t_crit_override = t_crit
+        t_crit_override = t_crit,
+        c2_override = c2
       )
 
       # The results are already in plot_decision_rules-compatible format
@@ -1399,8 +1417,8 @@ interim_sensitivity <- function(planned,
       # CP matrix: n_z1 x n_designs
       cp_mat <- sapply(seq_len(n_designs), function(j) {
         ncp <- delta * sqrt(I2_vec[j])
-        upper <- (t_crit - w1_ref * z1_grid) / w2_ref
-        lower <- (-t_crit - w1_ref * z1_grid) / w2_ref
+        upper <- (c2 - w1_ref * z1_grid) / w2_ref
+        lower <- (-c2 - w1_ref * z1_grid) / w2_ref
         pnorm(ncp - upper) + pnorm(lower - ncp)
       })
 
@@ -1470,6 +1488,7 @@ interim_sensitivity <- function(planned,
           w1_ref = w1_ref,
           efficacy_boundary = efficacy_boundary,
           t_crit = t_crit,
+          c2 = c2,
           b1 = delta
         ),
         power = total_power,

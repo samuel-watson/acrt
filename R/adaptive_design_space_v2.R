@@ -175,7 +175,9 @@ explore_design_space <- function(stage1_grid,
     # Stage 1 power
     if (!is.null(opt$results) && !is.null(opt$results$params$mu1)) {
       mu1 <- opt$results$params$mu1
-      base_summary$power_stage1 <- pnorm(-1.96 - mu1) + (1 - pnorm(1.96 - mu1))
+      eb <- opt$results$params$efficacy_boundary %||%
+        (qnorm(0.975) / opt$results$params$w1_ref)
+      base_summary$power_stage1 <- pnorm(-eb - mu1) + (1 - pnorm(eb - mu1))
     }
 
     # Call custom summary function if provided

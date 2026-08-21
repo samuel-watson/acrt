@@ -79,6 +79,47 @@ efficient_score_decomposition <- function(X, V, idx1, idx2, j = 2) {
   )
 }
 
+#' Calibrate the stage 2 boundary given a stage 1 efficacy boundary
+#'
+#' Solves, under H0,
+#'   P(|Z1| > c1) + int_{-c1}^{c1} P(|w1 z1 + w2 Z_{2|1}| > c2) phi(z1) dz1 = alpha
+#' for c2. Futility is treated as non-binding: the integral runs over all of
+#' [-c1, c1] rather than the continuation region. This is conservative, and it
+#' makes c2 a function of (w1, c1, alpha) alone -- the futility region depends
+#' on lambda, which is itself calibrated against a power target computed using
+#' c2, so a binding treatment would be circular.
+#'
+#' Because the stage 1 efficacy stop spends 2*(1 - Phi(c1)) of alpha, the
+#' solution always satisfies c2 > z_{alpha/2}.
+#'
+#' @param w1_ref Pre-planned stage 1 combination weight
+#' @param efficacy_boundary Stage 1 efficacy boundary c1
+#' @param alpha Two-sided type I error rate
+#' @return Scalar c2
+#' @export
+calibrate_c2 <- function(w1_ref, efficacy_boundary, alpha = 0.05) {
+
+  w2 <- sqrt(1 - w1_ref^2)
+  c1 <- efficacy_boundary
+  spend1 <- 2 * (1 - pnorm(c1))
+
+  if (spend1 >= alpha) {
+    stop(sprintf(
+      "Stage 1 boundary c1 = %.3f spends %.4f, exceeding alpha = %.3f. %s",
+      c1, spend1, alpha,
+      "A larger c1 (smaller w1) or larger alpha is required."))
+  }
+
+  cte <- function(z, c2) {
+    pnorm((-c2 - w1_ref * z) / w2) + 1 - pnorm((c2 - w1_ref * z) / w2)
+  }
+
+  uniroot(function(c2) {
+    spend1 +
+      integrate(function(z) cte(z, c2) * dnorm(z), -c1, c1)$value - alpha
+  }, c(0.5, 8))$root
+}
+
 # =============================================================================
 # Model Interface Specification
 # =============================================================================
@@ -118,7 +159,7 @@ efficient_score_decomposition <- function(X, V, idx1, idx2, j = 2) {
 #' @param z1_vec Vector of z1 values
 #' @param model_summaries Data frame with I2_eff, w1, w2, b1 columns
 #' @return Matrix: rows = z1 values, cols = designs
-conditional_power_matrix <- function(z1_vec, model_summaries) {
+conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL) {
   nz <- length(z1_vec)
   ng <- nrow(model_summaries)
 
@@ -139,8 +180,8 @@ conditional_power_matrix <- function(z1_vec, model_summaries) {
   if (is.null(df_s2)) df_s2 <- df_full
 
   # Critical values from full data df
-  t_crit <- qt(0.975, df = df_full)
-  T_CRIT <- matrix(t_crit, nz, ng, byrow = TRUE)
+  if (is.null(c2)) c2 <- qt(0.975, df = df_full)
+  T_CRIT <- matrix(c2, nz, ng, byrow = TRUE)
 
   # Thresholds for t2|1 to reject
   upper <- (T_CRIT - W1 * Z1) / W2
@@ -175,11 +216,9 @@ conditional_power_matrix <- function(z1_vec, model_summaries) {
 #' @return List of model outputs
 precompute_models <- function(design_grid, model_fn, fixed_params,
                               parallel = FALSE, n_cores = NULL) {
-
   compute_one <- function(i) {
     model_fn(design_grid[i, , drop = FALSE], fixed_params)
   }
-
   if (parallel) {
     if (is.null(n_cores)) n_cores <- parallel::detectCores() - 1
     model_list <- parallel::mclapply(1:nrow(design_grid), compute_one,
@@ -247,9 +286,11 @@ summarise_models <- function(model_list, cost_fn, cost_params, lambda = 1,
 find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
                                  resource_vars = NULL,
                                  w1_ref = NULL,
-                                 cost_cap = NULL) {
+                                 cost_cap = NULL,
+                                 c2 = NULL,
+                                 efficacy_boundary = NULL) {
 
-  cp_mat <- conditional_power_matrix(z1_vec, model_summaries)
+  cp_mat <- conditional_power_matrix(z1_vec, model_summaries, c2 = c2)
 
   if (is.null(cost_cap)) {
     # Original: λ-penalised criterion
@@ -289,7 +330,9 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
     w1_ref <- model_summaries$w1[1]
   }
 
-  efficacy_boundary <- 1.96 / w1_ref
+  if (is.null(efficacy_boundary)) {
+    efficacy_boundary <- qt(0.975, df = model_summaries$df_full[1]) / w1_ref
+  }
   efficacy_stop <- abs(z1_vec) > efficacy_boundary
   futility_stop <- !efficacy_stop & futility_criterion
   continue <- !efficacy_stop & !futility_stop
@@ -303,7 +346,8 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
     criterion = best_criterion,
     design_idx = ifelse(continue, best_idx, NA),
     w1_ref = w1_ref,
-    efficacy_boundary = efficacy_boundary
+    efficacy_boundary = efficacy_boundary,
+    c2 = if (is.null(c2)) NA_real_ else c2
   )
 
   design_cols <- names(design_grid)
@@ -342,7 +386,8 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
                                            w1_ref = NULL,
                                            df_s1 = Inf,
                                            df_full = Inf,
-                                           cost_cap = NULL) {
+                                           cost_cap = NULL,
+                                           c2 = NULL) {
 
   b1 <- model_summaries$b1[1]
   mu1 <- b1 * sqrt(I1_eff)
@@ -367,14 +412,17 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
     df_full <- model_summaries$df_full[1] %||% Inf
   }
 
-  # Critical value for efficacy boundary (from full data df)
   t_crit <- qt(0.975, df = df_full)
   efficacy_boundary <- t_crit / w1_ref
 
-  # Find optimal designs with correct boundary
+  # Stage 2 boundary c2, calibrated jointly with c1
+  if (is.null(c2)) c2 <- calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
+
   opt_designs <- find_optimal_designs(z1_grid, design_grid, model_summaries,
                                       resource_vars, w1_ref = w1_ref,
-                                      cost_cap = cost_cap)
+                                      cost_cap = cost_cap,
+                                      c2 = c2,
+                                      efficacy_boundary = efficacy_boundary)
 
   # Stage 1 power: P(|t1| > efficacy_boundary) under H1
   # t1 ~ t(df_s1, ncp = mu1) approximately, or using normal approximation:
@@ -436,6 +484,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
       w1_ref = w1_ref,
       efficacy_boundary = efficacy_boundary,
       t_crit = t_crit,
+      c2 = c2,
       df_s1 = df_s1,
       df_full = df_full
     )
@@ -479,7 +528,8 @@ find_lambda_for_power <- function(target_power = 0.8,
                                   # --- Interim overrides (lock to planned values) ---
                                   w1_override = NULL,
                                   efficacy_override = NULL,
-                                  t_crit_override = NULL) {
+                                  t_crit_override = NULL,
+                                  c2_override = NULL) {
 
   method <- match.arg(method)
 
@@ -504,19 +554,21 @@ find_lambda_for_power <- function(target_power = 0.8,
     mu1 <- b1 * sqrt(I1_eff)  # updated I1_eff with new ICC
     df_s1 <- Inf  # not used when overriding
   } else {
-    # Planning mode: compute everything from scratch
     mu1 <- b1 * sqrt(I1_eff)
     w1_ref <- sqrt(I1_eff / I_eff)
     df_s1 <- model_list[[1]]$df_s1 %||% Inf
     t_crit_s1 <- qt(0.975, df = df_s1)
     efficacy_boundary <- t_crit_s1 / w1_ref
   }
+  c2 <- c2_override %||% calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
 
   power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
   if (verbose) {
     cat(sprintf("Method: %s\n", method))
     cat(sprintf("df_s1 = %.0f, t_crit = %.3f\n", df_s1, t_crit_s1))
     cat(sprintf("w1 = %.4f, efficacy boundary |z1| > %.3f\n", w1_ref, efficacy_boundary))
+    cat(sprintf("stage 2 boundary |Z| > %.3f (calibrated; z_a/2 = %.3f)\n",
+                c2, qnorm(0.975)))
     cat(sprintf("Stage 1 power: %.4f\n", power_stage1))
   }
 
@@ -544,6 +596,7 @@ find_lambda_for_power <- function(target_power = 0.8,
         df_s1 = df_s1,
         t_crit_s1 = t_crit_s1,
         efficacy_boundary = efficacy_boundary,
+        c2 = c2,
         lambda = lambda,
         cost_params = cost_params,
         method = method
@@ -578,7 +631,8 @@ find_lambda_for_power <- function(target_power = 0.8,
         design_grid, ms, I1_eff, resource_vars,
         z1_range, n_quad,
         w1_ref = w1_ref, df_s1 = df_s1,
-        df_full = ms$df_full[1]
+        df_full = ms$df_full[1],
+        c2 = c2
       )
       list(power = pr$power$total, summaries = ms, results = pr)
     }
@@ -667,7 +721,8 @@ find_lambda_for_power <- function(target_power = 0.8,
         z1_range, n_quad,
         w1_ref = w1_ref, df_s1 = df_s1,
         df_full = model_summaries$df_full[1],
-        cost_cap = cap
+        cost_cap = cap,
+        c2 = c2
       )
       list(power = pr$power$total, summaries = model_summaries, results = pr)
     }
