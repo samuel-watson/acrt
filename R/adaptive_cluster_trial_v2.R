@@ -82,22 +82,20 @@ efficient_score_decomposition <- function(X, V, idx1, idx2, j = 2) {
 #' Calibrate the stage 2 boundary given a stage 1 efficacy boundary
 #'
 #' Solves, under H0,
-#'   P(|Z1| > c1) + int_{-c1}^{c1} P(|w1 z1 + w2 Z_{2|1}| > c2) phi(z1) dz1 = alpha
-#' for c2. Futility is treated as non-binding: the integral runs over all of
-#' [-c1, c1] rather than the continuation region. This is conservative, and it
-#' makes c2 a function of (w1, c1, alpha) alone -- the futility region depends
-#' on lambda, which is itself calibrated against a power target computed using
-#' c2, so a binding treatment would be circular.
-#'
-#' Because the stage 1 efficacy stop spends 2*(1 - Phi(c1)) of alpha, the
-#' solution always satisfies c2 > z_{alpha/2}.
+#'   P(|Z1| > c1) + int_R P(|w1 z1 + w2 Z_{2|1}| > c2) phi(z1) dz1 = alpha
+#' for c2, where R is the region over which the trial may continue.
 #'
 #' @param w1_ref Pre-planned stage 1 combination weight
 #' @param efficacy_boundary Stage 1 efficacy boundary c1
 #' @param alpha Two-sided type I error rate
+#' @param continuation NULL for non-binding futility, in which case R is the
+#'   whole of [-c1, c1]. For binding futility, a list of numeric length-2
+#'   vectors giving the continuation intervals, as returned by
+#'   `continuation_intervals()`.
 #' @return Scalar c2
 #' @export
-calibrate_c2 <- function(w1_ref, efficacy_boundary, alpha = 0.05) {
+calibrate_c2 <- function(w1_ref, efficacy_boundary, alpha = 0.05,
+                         continuation = NULL) {
 
   w2 <- sqrt(1 - w1_ref^2)
   c1 <- efficacy_boundary
@@ -114,10 +112,43 @@ calibrate_c2 <- function(w1_ref, efficacy_boundary, alpha = 0.05) {
     pnorm((-c2 - w1_ref * z) / w2) + 1 - pnorm((c2 - w1_ref * z) / w2)
   }
 
-  uniroot(function(c2) {
-    spend1 +
-      integrate(function(z) cte(z, c2) * dnorm(z), -c1, c1)$value - alpha
-  }, c(0.5, 8))$root
+  regions <- if (is.null(continuation)) list(c(-c1, c1)) else continuation
+  regions <- Filter(function(r) r[2] > r[1], regions)
+  if (!length(regions))
+    stop("continuation region is empty; alpha cannot be attained at stage 2")
+
+  stage2 <- function(c2) {
+    sum(vapply(regions, function(r)
+      integrate(function(z) cte(z, c2) * dnorm(z), r[1], r[2])$value,
+      numeric(1)))
+  }
+
+  ## With binding futility the solution can fall below z_{alpha/2}: the
+  ## futility boundary returns more alpha than the interim efficacy stop
+  ## consumes. The search interval must allow for that.
+  uniroot(function(c2) spend1 + stage2(c2) - alpha, c(0.2, 8))$root
+}
+
+#' Continuation intervals from a decision-rule grid
+#'
+#' Converts a logical `continue` indicator over a z1 grid into a list of
+#' intervals, taking interval edges at the midpoints between grid nodes.
+#' Returns a list of length-2 numeric vectors; more than one element indicates
+#' a non-contiguous continuation region.
+#' @export
+continuation_intervals <- function(z1_grid, continue_flag) {
+  o <- order(z1_grid)
+  z <- z1_grid[o]; f <- as.logical(continue_flag)[o]
+  if (!any(f)) return(list())
+
+  r <- rle(f)
+  ends <- cumsum(r$lengths); starts <- ends - r$lengths + 1L
+  lapply(which(r$values), function(i) {
+    s <- starts[i]; e <- ends[i]
+    lo <- if (s == 1L)        z[1]         else mean(z[c(s - 1L, s)])
+    hi <- if (e == length(z)) z[length(z)] else mean(z[c(e, e + 1L)])
+    c(lo, hi)
+  })
 }
 
 # =============================================================================
@@ -428,13 +459,13 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
   # t1 ~ t(df_s1, ncp = mu1) approximately, or using normal approximation:
   # z1 ~ N(mu1, 1) and we reject if |z1| > efficacy_boundary
 
-  if (is.finite(df_s1)) {
-    # Use non-central t
-    power_stage1 <- pt(-efficacy_boundary, df = df_s1, ncp = mu1) +
-      pt(efficacy_boundary, df = df_s1, ncp = mu1, lower.tail = FALSE)
+  power_stage1 <- if (is.finite(df_s1)) {
+    b1_t <- qt(pnorm(efficacy_boundary), df = df_s1)
+    if (mu1 >= 0) pt(b1_t, df = df_s1, ncp = mu1, lower.tail = FALSE)
+    else          pt(-b1_t, df = df_s1, ncp = mu1)
   } else {
-    # Fall back to normal
-    power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
+    if (mu1 >= 0) 1 - pnorm(efficacy_boundary - mu1)
+    else          pnorm(-efficacy_boundary - mu1)
   }
 
   # Stage 2 power: CP integrated over continuation region
@@ -511,7 +542,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
 #' @param n_quad Quadrature points
 #' @param verbose Print progress
 #' @return List with lambda, power, and full results
-find_lambda_for_power <- function(target_power = 0.8,
+.find_lambda_inner <- function(target_power = 0.8,
                                   design_grid,
                                   model_fn,
                                   fixed_params,
@@ -529,7 +560,11 @@ find_lambda_for_power <- function(target_power = 0.8,
                                   w1_override = NULL,
                                   efficacy_override = NULL,
                                   t_crit_override = NULL,
-                                  c2_override = NULL) {
+                                  c2_override = NULL,
+                                  futility = c("nonbinding", "binding"),
+                                  c2_tol = 1e-4,
+                                  c2_max_iter = 5,
+                                  c2_fixed = NULL) {
 
   method <- match.arg(method)
 
@@ -560,7 +595,9 @@ find_lambda_for_power <- function(target_power = 0.8,
     t_crit_s1 <- qt(0.975, df = df_s1)
     efficacy_boundary <- t_crit_s1 / w1_ref
   }
-  c2 <- c2_override %||% calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
+  futility <- match.arg(futility)
+  c2 <- c2_fixed %||% c2_override %||%
+    calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
 
   power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
   if (verbose) {
@@ -598,6 +635,7 @@ find_lambda_for_power <- function(target_power = 0.8,
         efficacy_boundary = efficacy_boundary,
         c2 = c2,
         lambda = lambda,
+        futility = futility,
         cost_params = cost_params,
         method = method
       )
@@ -614,6 +652,8 @@ find_lambda_for_power <- function(target_power = 0.8,
       power = power_stage1,
       target = target_power,
       method = method,
+      futility = futility,
+      c2 = c2,
       message = "Target achieved by stage 1 efficacy stopping alone",
       results = NULL,
       iterations = 0
@@ -792,6 +832,77 @@ find_lambda_for_power <- function(target_power = 0.8,
       iterations = max_iter, history = history
     )
   }
+}
+
+#' Find lambda that achieves target power
+#'
+#' Wrapper around the solve that resolves the circular dependence between the
+#' stage 2 boundary and the futility region when binding futility is used:
+#' c2 depends on the continuation region, which depends on lambda, which is
+#' calibrated against a power target computed using c2. Converges quickly
+#' because the futility boundary moves only weakly with c2.
+#'
+#' @inheritParams .find_lambda_inner
+#' @export
+find_lambda_for_power <- function(..., futility = c("nonbinding", "binding"),
+                                  c2_tol = 1e-4, c2_max_iter = 5,
+                                  verbose = TRUE) {
+
+  futility <- match.arg(futility)
+
+  ## Non-binding: single pass, identical to previous behaviour.
+  if (futility == "nonbinding") {
+    return(.find_lambda_inner(..., futility = "nonbinding", verbose = verbose))
+  }
+
+  fit <- NULL
+  c2  <- NULL
+
+  for (it in seq_len(c2_max_iter)) {
+
+    fit <- .find_lambda_inner(..., futility = "binding", verbose = verbose,
+                              c2_fixed = c2)
+
+    ## No continuation region to read (e.g. stage 1 alone reaches the target)
+    if (is.null(fit$results)) return(fit)
+
+    q    <- fit$results$quadrature
+    p    <- fit$results$params
+    cont <- continuation_intervals(q$z1, q$optimal_designs$continue)
+
+    if (!length(cont)) {
+      warning("empty continuation region; retaining non-binding c2")
+      return(fit)
+    }
+
+    c2_new <- calibrate_c2(p$w1_ref, p$efficacy_boundary, alpha = 0.05,
+                           continuation = cont)
+
+    if (verbose) {
+      cat(sprintf("c2 iteration %d: %s -> %.4f  continuation %s\n", it,
+                  if (is.null(c2)) "(non-binding start)" else sprintf("%.4f", c2),
+                  c2_new,
+                  paste(sprintf("[%.2f, %.2f]",
+                                vapply(cont, `[`, numeric(1), 1),
+                                vapply(cont, `[`, numeric(1), 2)),
+                        collapse = " ")))
+    }
+
+    if (!is.null(c2) && abs(c2_new - c2) < c2_tol) {
+      c2 <- c2_new
+      break
+    }
+    c2 <- c2_new
+  }
+
+  ## Final pass so the returned object is solved at the converged c2
+  fit <- .find_lambda_inner(..., futility = "binding", verbose = verbose,
+                            c2_fixed = c2)
+  if (!isTRUE(all.equal(fit$results$params$c2, c2)))
+    stop(sprintf("binding c2 not propagated: params$c2 = %s, expected %.4f",
+                 format(fit$results$params$c2), c2))
+  fit$c2_iterations <- it
+  fit
 }
 
 # =============================================================================

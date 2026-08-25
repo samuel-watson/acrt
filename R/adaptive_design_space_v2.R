@@ -67,6 +67,7 @@ explore_design_space <- function(stage1_grid,
                                  sample_size_fn = NULL,
                                  summary_fn = NULL,
                                  verbose = TRUE,
+                                 futility = NULL,
                                  ...) {
 
   n_designs <- nrow(stage1_grid)
@@ -107,6 +108,7 @@ explore_design_space <- function(stage1_grid,
         cost_params = cost_params,
         resource_vars = resource_vars,
         verbose = verbose,
+        futility = futility,
         ...
       )
     }, error = function(e) {
