@@ -159,7 +159,9 @@ calibrate_c2 <- function(w1_ref, efficacy_boundary, alpha = 0.05) {
 #' @param z1_vec Vector of z1 values
 #' @param model_summaries Data frame with I2_eff, w1, w2, b1 columns
 #' @return Matrix: rows = z1 values, cols = designs
-conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL) {
+conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL,
+                                     cp_direction = c("target", "both")) {
+  cp_direction <- match.arg(cp_direction)
   nz <- length(z1_vec)
   ng <- nrow(model_summaries)
 
@@ -180,24 +182,41 @@ conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL) {
   if (is.null(df_s2)) df_s2 <- df_full
 
   # Critical values from full data df
-  if (is.null(c2)) c2 <- qt(0.975, df = df_full)
-  T_CRIT <- matrix(c2, nz, ng, byrow = TRUE)
+  if (is.null(c2)) c2 <- qnorm(0.975)
+  C2 <- matrix(c2, nz, ng, byrow = TRUE)
 
-  # Thresholds for t2|1 to reject
-  upper <- (T_CRIT - W1 * Z1) / W2
-  lower <- (-T_CRIT - W1 * Z1) / W2
+  # Thresholds for Z_{2|1} on the z scale
+  upper_z <- ( C2 - W1 * Z1) / W2
+  lower_z <- (-C2 - W1 * Z1) / W2
 
-  # Conditional power using non-central t for t2|1
-  # t2|1 ~ t(df_s2, ncp = mu2|1)
+  # Section 3.1: Z_{2|1} = Phi^{-1}(F_{t_nu}(T_{2|1})), so the event
+  # {Z_{2|1} > u} is the event {T_{2|1} > qt(Phi(u), nu)}. Map the z-scale
+  # thresholds onto the t scale before evaluating the non-central t.
   cp_mat <- matrix(NA, nz, ng)
 
   for (j in seq_len(ng)) {
     ncp_j <- NCP2[1, j]
-    df_j <- df_s2[j]
+    df_j  <- df_s2[j]
 
-    # P(T < lower) + P(T > upper) where T ~ t(df, ncp)
-    cp_mat[, j] <- pt(lower[, j], df = df_j, ncp = ncp_j) +
-      pt(upper[, j], df = df_j, ncp = ncp_j, lower.tail = FALSE)
+    if (is.finite(df_j)) {
+      upper_t <- qt(pnorm(upper_z[, j]), df = df_j)
+      lower_t <- qt(pnorm(lower_z[, j]), df = df_j)
+    } else {
+      upper_t <- upper_z[, j]
+      lower_t <- lower_z[, j]
+    }
+
+    if (cp_direction == "target") {
+      s <- sign(ncp_j)
+      if (s == 0) s <- 1
+      # mirror so the target direction is always upper
+      upper_s <- if (s > 0) upper_t else -lower_t
+      cp_mat[, j] <- pt(upper_s, df = df_j, ncp = abs(ncp_j),
+                        lower.tail = FALSE)
+    } else {
+      cp_mat[, j] <- pt(lower_t, df = df_j, ncp = ncp_j) +
+        pt(upper_t, df = df_j, ncp = ncp_j, lower.tail = FALSE)
+    }
   }
 
   cp_mat
@@ -288,9 +307,11 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
                                  w1_ref = NULL,
                                  cost_cap = NULL,
                                  c2 = NULL,
-                                 efficacy_boundary = NULL) {
+                                 efficacy_boundary = NULL,
+                                 cp_direction = NULL) {
 
-  cp_mat <- conditional_power_matrix(z1_vec, model_summaries, c2 = c2)
+  cp_mat <- conditional_power_matrix(z1_vec, model_summaries, c2 = c2,
+                                     cp_direction = cp_direction)
 
   if (is.null(cost_cap)) {
     # Original: λ-penalised criterion
@@ -382,16 +403,23 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
 #' @return List with power components, probabilities, and expected resources
 compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
                                            resource_vars = NULL,
-                                           z1_range = c(-4, 4), n_quad = 50,
+                                           z1_range = NULL,
+                                           n_quad = 100,
                                            w1_ref = NULL,
                                            df_s1 = Inf,
                                            df_full = Inf,
                                            cost_cap = NULL,
-                                           c2 = NULL) {
+                                           c2 = NULL,
+                                           cp_direction = NULL) {
 
   b1 <- model_summaries$b1[1]
   mu1 <- b1 * sqrt(I1_eff)
 
+  # Centre the quadrature on mu1. A fixed c(-4, 4) truncates ~5% of the mass
+  # when mu1 is around 2.3, which does not affect power_total (power_stage1 is
+  # analytic and the continuation region lies inside the range) but does make
+  # prob_efficacy + prob_continue + prob_futility sum to less than 1.
+  if (is.null(z1_range)) z1_range <- mu1 + c(-8, 8)
   # Gauss-Legendre quadrature
   gl <- statmod::gauss.quad(n_quad, kind = "legendre")
   z1_grid <- (gl$nodes + 1) / 2 * diff(z1_range) + z1_range[1]
@@ -412,29 +440,33 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
     df_full <- model_summaries$df_full[1] %||% Inf
   }
 
-  t_crit <- qt(0.975, df = df_full)
+  t_crit <- qnorm(0.975)
   efficacy_boundary <- t_crit / w1_ref
 
   # Stage 2 boundary c2, calibrated jointly with c1
   if (is.null(c2)) c2 <- calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
-
   opt_designs <- find_optimal_designs(z1_grid, design_grid, model_summaries,
                                       resource_vars, w1_ref = w1_ref,
                                       cost_cap = cost_cap,
                                       c2 = c2,
-                                      efficacy_boundary = efficacy_boundary)
+                                      efficacy_boundary = efficacy_boundary,
+                                      cp_direction = cp_direction)
 
   # Stage 1 power: P(|t1| > efficacy_boundary) under H1
   # t1 ~ t(df_s1, ncp = mu1) approximately, or using normal approximation:
   # z1 ~ N(mu1, 1) and we reject if |z1| > efficacy_boundary
 
   if (is.finite(df_s1)) {
-    # Use non-central t
-    power_stage1 <- pt(-efficacy_boundary, df = df_s1, ncp = mu1) +
-      pt(efficacy_boundary, df = df_s1, ncp = mu1, lower.tail = FALSE)
+    # {|Z1| > c1} is {|T1| > qt(Phi(c1), df_s1)}
+    b1_t <- qt(pnorm(efficacy_boundary), df = df_s1)
+    power_stage1 <- if (mu1 >= 0) {
+      pt(b1_t, df = df_s1, ncp = mu1, lower.tail = FALSE)
+    } else {
+      pt(-b1_t, df = df_s1, ncp = mu1)
+    }
   } else {
-    # Fall back to normal
-    power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
+    power_stage1 <- pnorm(-efficacy_boundary - mu1) +
+      (1 - pnorm(efficacy_boundary - mu1))
   }
 
   # Stage 2 power: CP integrated over continuation region
@@ -447,6 +479,13 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
   prob_efficacy <- sum(weights[opt_designs$efficacy_stop])
   prob_futility <- sum(weights[opt_designs$futility_stop])
   prob_continue <- sum(weights[continue])
+
+  prob_total <- prob_efficacy + prob_futility + prob_continue
+  if (abs(prob_total - 1) > 1e-3) {
+    warning(sprintf(
+      "decision probabilities sum to %.4f; widen z1_range or raise n_quad",
+      prob_total))
+  }
 
   # Expected values over continuation region
   expected <- list()
@@ -522,8 +561,8 @@ find_lambda_for_power <- function(target_power = 0.8,
                                   lambda_range = c(1e-8, 1),
                                   tol = 0.01,
                                   max_iter = 50,
-                                  z1_range = c(-4, 4),
-                                  n_quad = 50,
+                                  z1_range = NULL,
+                                  n_quad = 100,
                                   verbose = TRUE,
                                   # --- Interim overrides (lock to planned values) ---
                                   w1_override = NULL,
@@ -561,7 +600,7 @@ find_lambda_for_power <- function(target_power = 0.8,
     efficacy_boundary <- t_crit_s1 / w1_ref
   }
   c2 <- c2_override %||% calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
-
+  if (is.null(z1_range)) z1_range <- mu1 + c(-8, 8)
   power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
   if (verbose) {
     cat(sprintf("Method: %s\n", method))

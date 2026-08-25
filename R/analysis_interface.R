@@ -1191,6 +1191,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     c2 = c2,
     theta_hat = theta_hat,
     delta = delta,
+    direction = if (z1_obs > 0) "greater" else "less",
     recalibrated = recalibrate,
     all_designs = all_designs,
     planned = list(
@@ -1263,7 +1264,7 @@ print.interim_result <- function(x, ...) {
 interim_sensitivity <- function(planned,
                                 scenarios,
                                 delta = NULL,
-                                z1_range = c(-3, 4),
+                                z1_range = NULL,
                                 n_z1 = 200,
                                 include_planned = TRUE,
                                 target_power = 0.8) {
