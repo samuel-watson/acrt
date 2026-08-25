@@ -54,13 +54,15 @@ extract_cost_params <- function(design) {
 #'                             verbose = TRUE, tol = 0.01, method = "cost_cap")
 #' @export
 adaptive_analysis <- function(design, target_power = 0.8,
-                              explore = TRUE, verbose = TRUE, ...) {
+                              explore = TRUE, verbose = TRUE,
+                              futility = c("nonbinding", "binding"), ...) {
   UseMethod("adaptive_analysis")
 }
 
 #' @export
 adaptive_analysis.crt_design <- function(design, target_power = 0.8,
-                                         explore = TRUE, verbose = TRUE, ...) {
+                                         explore = TRUE, verbose = TRUE,
+                                         futility = c("nonbinding", "binding"),...) {
 
   spec <- design$spec
   rho <- design$rho
@@ -90,6 +92,7 @@ adaptive_analysis.crt_design <- function(design, target_power = 0.8,
       resource_vars = spec$stage2_params,
       sample_size_fn = sample_size_fn,
       verbose = verbose,
+      futility = futility,
       ...
     )
 
@@ -117,6 +120,7 @@ adaptive_analysis.crt_design <- function(design, target_power = 0.8,
       cost_params = extract_cost_params(design),
       resource_vars = spec$stage2_params,
       verbose = verbose,
+      futility = futility,
       ...
     )
   }
@@ -188,8 +192,9 @@ print.adaptive_results <- function(x, ...) {
                   x$raw$results$params$efficacy_boundary))
     }
     if (!is.null(x$raw$results$params$c2)) {
-      cat(sprintf("Stage 2 boundary:  |Z|  > %.3f\n",
-                  x$raw$results$params$c2))
+      cat(sprintf("Stage 2 boundary:  |Z|  > %.3f (%s futility)\n",
+                  x$raw$results$params$c2,
+                  x$raw$results$params$futility %||% "nonbinding"))
     }
   }
 
@@ -1014,6 +1019,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
       efficacy_boundary = efficacy_boundary,
       stage2_design = NULL,
       conditional_power = NA,
+      futility = r$results$params$futility %||% "nonbinding",
       message = sprintf("z1 = %.3f exceeds efficacy boundary %.3f",
                         abs(z1_obs), efficacy_boundary)
     ), class = "interim_result"))
@@ -1103,6 +1109,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
         stage2_design = NULL,
         conditional_power = 0,
         recalibrated = recalibrate,
+        futility = r$results$params$futility %||% "nonbinding",
         message = "No designs feasible within budget"
       ), class = "interim_result"))
     }
@@ -1120,6 +1127,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
         stage2_design = as.list(design_grid[best_idx, ]),
         conditional_power = best_cp,
         recalibrated = recalibrate,
+        futility = r$results$params$futility %||% "nonbinding",
         message = "Conditional power negligible within budget"
       ), class = "interim_result"))
     }
@@ -1143,6 +1151,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
         conditional_power = best_cp,
         criterion = best_criterion,
         recalibrated = recalibrate,
+        futility = r$results$params$futility %||% "nonbinding",
         message = sprintf("Best criterion = %.4f < 0", best_criterion)
       ), class = "interim_result"))
     }
@@ -1166,6 +1175,10 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     if (recalibrate && length(theta_hat) > 0) {
       cat(sprintf("Lambda (planned):      %.4e\n", r$lambda %||% NA))
       cat(sprintf("Lambda (recalibrated): %.4e\n", lambda_use %||% NA))
+    }
+    if (verbose) {
+      cat(sprintf("Stage 2 boundary:  |Z|  > %.3f (%s futility)\n",
+                  c2, r$results$params$futility %||% "nonbinding"))
     }
   }
 
@@ -1193,6 +1206,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     delta = delta,
     direction = if (z1_obs > 0) "greater" else "less",
     recalibrated = recalibrate,
+    futility = r$results$params$futility %||% "nonbinding",
     all_designs = all_designs,
     planned = list(
       w1_ref = w1_ref,
@@ -1211,7 +1225,8 @@ print.interim_result <- function(x, ...) {
   cat(sprintf("  Decision: %s\n", toupper(gsub("_", " ", x$decision))))
   cat(sprintf("  z1 observed: %.3f\n", x$z1))
   if (!is.null(x$c2)) {
-    cat(sprintf("  Stage 2 boundary: |Z| > %.3f\n", x$c2))
+    cat(sprintf("  Stage 2 boundary: |Z| > %.3f (%s futility)\n",
+                x$c2, x$futility %||% "nonbinding"))
   }
 
   if (x$decision == "efficacy_stop") {
