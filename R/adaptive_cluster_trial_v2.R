@@ -231,7 +231,7 @@ conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL,
 
     if (is.finite(df_j)) {
       upper_t <- qt(pmin(pmax(pnorm(upper_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
-      lower_t <- qt(pmin(pmax(pnorm(upper_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
+      lower_t <- qt(pmin(pmax(pnorm(lower_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
     } else {
       upper_t <- upper_z[, j]
       lower_t <- lower_z[, j]
