@@ -262,9 +262,9 @@ plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
     scale_x_continuous(breaks = scales::pretty_breaks(n = 8)) +
     labs(
       x = expression(z[1]~"(stage 1 statistic)"),
-      y = if (show_density) expression("Density of "*z[1]*" under "*H[1]) else NULL,
-      title = title %||% "Interim Decision Rules",
-      subtitle = subtitle
+      y = if (show_density) expression("Density of "*z[1]*" under "*H[1]) else NULL
+      # title = title %||% "Interim Decision Rules",
+      # subtitle = subtitle
     ) +
     theme_minimal(base_size = 11) +
     theme(
@@ -332,14 +332,14 @@ create_design_plots <- function(plot_data, design_vars, boundaries, palette) {
     var_label <- tools::toTitleCase(gsub("_", " ", var))
 
     p <- ggplot(df_var, aes(x = z1, y = .data[[var]])) +
-      geom_ribbon(aes(ymin = min(.data[[var]], na.rm = TRUE),
-                      ymax = .data[[var]]),
-                  fill = "#2a9d8f", alpha = 0.15) +
+      # geom_ribbon(aes(ymin = min(.data[[var]], na.rm = TRUE),
+      #                 ymax = .data[[var]]),
+      #             fill = "#2a9d8f", alpha = 0.15) +
       geom_step(linewidth = 0.9, colour = "#2a9d8f") +
       geom_point(size = 1.8, colour = "#2a9d8f", alpha = 0.7) +
       scale_x_continuous(breaks = scales::pretty_breaks(n = 8)) +
       scale_y_continuous(expand = expansion(mult = 0.1)) +
-      labs(x = expression(z[1]), y = var_label) +
+      labs(x = expression(z[1]), y = tolower(var_label)) +
       theme_minimal(base_size = 10) +
       theme(
         panel.grid.minor = element_blank(),
