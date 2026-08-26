@@ -230,8 +230,8 @@ conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL,
     df_j  <- df_s2[j]
 
     if (is.finite(df_j)) {
-      upper_t <- qt(pnorm(upper_z[, j]), df = df_j)
-      lower_t <- qt(pnorm(lower_z[, j]), df = df_j)
+      upper_t <- qt(pmin(pmax(pnorm(upper_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
+      lower_t <- qt(pmin(pmax(pnorm(upper_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
     } else {
       upper_t <- upper_z[, j]
       lower_t <- lower_z[, j]
@@ -240,13 +240,13 @@ conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL,
     if (cp_direction == "target") {
       s <- sign(ncp_j)
       if (s == 0) s <- 1
-      # mirror so the target direction is always upper
       upper_s <- if (s > 0) upper_t else -lower_t
-      cp_mat[, j] <- pt(upper_s, df = df_j, ncp = abs(ncp_j),
-                        lower.tail = FALSE)
+      cp_mat[, j] <- suppressWarnings(
+        pt(upper_s, df = df_j, ncp = abs(ncp_j), lower.tail = FALSE))
     } else {
-      cp_mat[, j] <- pt(lower_t, df = df_j, ncp = ncp_j) +
-        pt(upper_t, df = df_j, ncp = ncp_j, lower.tail = FALSE)
+      cp_mat[, j] <- suppressWarnings(
+        pt(lower_t, df = df_j, ncp = ncp_j) +
+          pt(upper_t, df = df_j, ncp = ncp_j, lower.tail = FALSE))
     }
   }
 
@@ -265,7 +265,7 @@ conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL,
 #' @param n_cores Number of cores (default: all - 1)
 #' @return List of model outputs
 precompute_models <- function(design_grid, model_fn, fixed_params,
-                              parallel = FALSE, n_cores = NULL) {
+                              parallel = FALSE, n_cores = NULL, verbose = FALSE) {
   compute_one <- function(i) {
     model_fn(design_grid[i, , drop = FALSE], fixed_params)
   }
@@ -275,7 +275,7 @@ precompute_models <- function(design_grid, model_fn, fixed_params,
                                      mc.cores = n_cores)
   } else {
     # Use pbapply if available for progress bar
-    if (requireNamespace("pbapply", quietly = TRUE)) {
+    if (requireNamespace("pbapply", quietly = TRUE) & verbose) {
       model_list <- pbapply::pblapply(1:nrow(design_grid), compute_one)
     } else {
       model_list <- lapply(1:nrow(design_grid), compute_one)
@@ -607,7 +607,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
   # Precompute models once (expensive part)
   if (verbose) cat("Precomputing models...\n")
   model_list <- precompute_models(design_grid, model_fn, fixed_params,
-                                  parallel = FALSE, n_cores = NULL)
+                                  parallel = FALSE, n_cores = NULL, verbose = verbose)
 
   I1_eff <- model_list[[1]]$I1_eff
   I_eff <- model_list[[1]]$I_eff
@@ -650,6 +650,14 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
                                       lambda = 1, resource_vars)
 
   build_results <- function(lambda, model_summaries, power_results) {
+    od <- power_results$quadrature$optimal_designs
+    zg <- power_results$quadrature$z1
+    stopifnot(!is.null(od$futility_stop), length(zg) == length(od$futility_stop))
+    fz <- zg[od$futility_stop & zg < efficacy_boundary]
+    futility_boundary <- if (length(fz)) max(fz) else -Inf
+    if (!is.finite(futility_boundary))
+      warning("no futility region found on the quadrature grid; ",
+              "protocol futility rule will never fire")
     list(
       power = power_results$power,
       probabilities = power_results$probabilities,
@@ -669,9 +677,10 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
         df_s1 = df_s1,
         t_crit_s1 = t_crit_s1,
         efficacy_boundary = efficacy_boundary,
+        futility_boundary = futility_boundary,
         c2 = c2,
-        lambda = lambda,
         futility = futility,
+        lambda = lambda,
         cost_params = cost_params,
         method = method
       )
@@ -882,7 +891,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
 #' @export
 find_lambda_for_power <- function(..., futility = c("nonbinding", "binding"),
                                   c2_tol = 1e-4, c2_max_iter = 5,
-                                  verbose = TRUE) {
+                                  verbose = FALSE) {
 
   futility <- match.arg(futility)
 
@@ -902,14 +911,18 @@ find_lambda_for_power <- function(..., futility = c("nonbinding", "binding"),
     ## No continuation region to read (e.g. stage 1 alone reaches the target)
     if (is.null(fit$results)) return(fit)
 
-    q    <- fit$results$quadrature
-    p    <- fit$results$params
-    cont <- continuation_intervals(q$z1, q$optimal_designs$continue)
+    p <- fit$results$params
 
-    if (!length(cont)) {
-      warning("empty continuation region; retaining non-binding c2")
+    ## Calibrate against the region interim_analysis() actually applies: the
+    ## single interval (c_f, c1). Using the raw `continue` flags instead can
+    ## span a wider, non-contiguous region on the quadrature grid, giving a c2
+    ## that is too low and an attained error rate above alpha.
+    if (!is.finite(p$futility_boundary) ||
+        p$futility_boundary >= p$efficacy_boundary) {
+      warning("no valid futility boundary; retaining non-binding c2")
       return(fit)
     }
+    cont <- list(c(p$futility_boundary, p$efficacy_boundary))
 
     c2_new <- calibrate_c2(p$w1_ref, p$efficacy_boundary, alpha = 0.05,
                            continuation = cont)

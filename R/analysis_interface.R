@@ -987,6 +987,8 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   t_crit <- r$results$params$t_crit %||% 1.96
   c2 <- r$results$params$c2 %||%
     calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
+  futility_boundary <- r$results$params$futility_boundary %||% -Inf
+  futility_conv <- r$results$params$futility %||% "nonbinding"
   b1_planned <- r$results$params$b1
   method <- r$method %||% "lambda"
 
@@ -1019,9 +1021,40 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
       efficacy_boundary = efficacy_boundary,
       stage2_design = NULL,
       conditional_power = NA,
-      futility = r$results$params$futility %||% "nonbinding",
+      futility = futility_conv,
       message = sprintf("z1 = %.3f exceeds efficacy boundary %.3f",
                         abs(z1_obs), efficacy_boundary)
+    ), class = "interim_result"))
+  }
+
+  # --- Step 1b: Protocol futility rule ---
+  # The stopping rule is fixed at trial start. theta_hat governs which stage 2
+  # design is chosen, not whether the trial continues. Re-deriving the futility
+  # criterion here would make the continuation region data-dependent, which
+  # invalidates the binding calibration of c2 (and, under H0, the design does
+  # not affect P(reject | z1) at all, since Z_{2|1} ~ N(0,1) whichever g is
+  # selected -- only the stopping rule enters the calibration).
+  protocol_futility <- z1_obs < futility_boundary
+
+  if (verbose && is.finite(futility_boundary)) {
+    cat(sprintf("Futility boundary: z1 < %.3f (protocol)\n", futility_boundary))
+  }
+
+  if (protocol_futility) {
+    if (verbose) cat("\n** RECOMMENDATION: Stop for futility (protocol rule) **\n")
+    return(structure(list(
+      decision = "futility_stop",
+      z1 = z1_obs,
+      w1_ref = w1_ref,
+      c2 = c2,
+      efficacy_boundary = efficacy_boundary,
+      futility_boundary = futility_boundary,
+      stage2_design = NULL,
+      conditional_power = NA_real_,
+      recalibrated = FALSE,
+      futility = futility_conv,
+      message = sprintf("z1 = %.3f below protocol futility boundary %.3f",
+                        z1_obs, futility_boundary)
     ), class = "interim_result"))
   }
 
@@ -1095,6 +1128,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   }
 
   # --- Step 5: Apply decision criterion ---
+  poor_value <- FALSE
   if (method == "cost_cap") {
     feasible <- cost_vec <= cost_cap_use
 
@@ -1109,7 +1143,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
         stage2_design = NULL,
         conditional_power = 0,
         recalibrated = recalibrate,
-        futility = r$results$params$futility %||% "nonbinding",
+        futility = futility_conv,
         message = "No designs feasible within budget"
       ), class = "interim_result"))
     }
@@ -1118,7 +1152,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     best_idx <- which.max(criterion)
     best_cp <- cp_vec[best_idx]
 
-    if (best_cp < 1e-6) {
+    if (best_cp < 1e-12) {
       if (verbose) cat("\n** RECOMMENDATION: Stop for futility (negligible CP) **\n")
       return(structure(list(
         decision = "futility_stop",
@@ -1127,7 +1161,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
         stage2_design = as.list(design_grid[best_idx, ]),
         conditional_power = best_cp,
         recalibrated = recalibrate,
-        futility = r$results$params$futility %||% "nonbinding",
+        futility = futility_conv,
         message = "Conditional power negligible within budget"
       ), class = "interim_result"))
     }
@@ -1140,20 +1174,10 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
 
     if (verbose) cat(sprintf("Lambda = %.4e\n", lambda_use))
 
-    if (best_criterion < 0) {
-      if (verbose) cat("\n** RECOMMENDATION: Stop for futility **\n")
-      return(structure(list(
-        decision = "futility_stop",
-        z1 = z1_obs,
-        w1_ref = w1_ref,
-        lambda = lambda_use,
-        stage2_design = NULL,
-        conditional_power = best_cp,
-        criterion = best_criterion,
-        recalibrated = recalibrate,
-        futility = r$results$params$futility %||% "nonbinding",
-        message = sprintf("Best criterion = %.4f < 0", best_criterion)
-      ), class = "interim_result"))
+    poor_value <- best_criterion < 0
+    if (verbose && poor_value) {
+      cat(sprintf("Note: best criterion = %.4f < 0; continuing on protocol rule\n",
+                  best_criterion))
     }
   }
 
@@ -1178,7 +1202,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     }
     if (verbose) {
       cat(sprintf("Stage 2 boundary:  |Z|  > %.3f (%s futility)\n",
-                  c2, r$results$params$futility %||% "nonbinding"))
+                  c2, futility_conv))
     }
   }
 
@@ -1206,7 +1230,8 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
     delta = delta,
     direction = if (z1_obs > 0) "greater" else "less",
     recalibrated = recalibrate,
-    futility = r$results$params$futility %||% "nonbinding",
+    futility = futility_conv,
+    poor_value = poor_value,
     all_designs = all_designs,
     planned = list(
       w1_ref = w1_ref,
