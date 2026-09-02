@@ -3,6 +3,30 @@
 # Generalised to support arbitrary stage 2 design parameters
 # =============================================================================
 
+## Density of Z1 = Phi^{-1}(F_{t_nu}(T1)) when T1 ~ t_nu(ncp = mu1).
+## Under H0 (mu1 = 0) this is exactly dnorm(z); it reduces to dnorm(z - mu1)
+## as nu -> Inf. Log-scale throughout, so the quadrature tails stay finite.
+z1_density <- function(z, mu1, df) {
+  if (!is.finite(df)) return(dnorm(z - mu1))
+  tq <- suppressWarnings(ifelse(z >= 0,
+               qt(pnorm(z, lower.tail = FALSE, log.p = TRUE), df = df,
+                  lower.tail = FALSE, log.p = TRUE),
+               qt(pnorm(z, log.p = TRUE), df = df, log.p = TRUE)))
+  exp(dnorm(z, log = TRUE) +
+        suppressWarnings(dt(tq, df = df, ncp = mu1, log = TRUE)) -
+        suppressWarnings(dt(tq, df = df, log = TRUE)))
+}
+
+## P(|Z1| > efficacy_boundary). Two-sided in both branches so that it agrees
+## with prob_efficacy by construction.
+stage1_power <- function(efficacy_boundary, mu1, df_s1) {
+  if (!is.finite(df_s1))
+    return(pnorm(-efficacy_boundary - mu1) +
+             pnorm(efficacy_boundary - mu1, lower.tail = FALSE))
+  bt <- qt(pnorm(efficacy_boundary), df = df_s1)
+  pt(bt, df = df_s1, ncp = mu1, lower.tail = FALSE) + pt(-bt, df = df_s1, ncp = mu1)
+}
+
 #' Compute efficient score decomposition for treatment effect
 #'
 #' Projects out nuisance parameters first, then decomposes by stage
@@ -455,12 +479,12 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
   gl <- statmod::gauss.quad(n_quad, kind = "legendre")
   z1_grid <- (gl$nodes + 1) / 2 * diff(z1_range) + z1_range[1]
   gl_weights <- gl$weights / 2 * diff(z1_range)
-  dens <- dnorm(z1_grid - mu1)
+  dens    <- z1_density(z1_grid, mu1, df_s1)     # was dnorm(z1_grid - mu1)
   weights <- gl_weights * dens
 
   # Get w1 if not provided
   if (is.null(w1_ref)) {
-    w1_ref <- model_summaries$w1[1]
+    stop("w1_ref must be supplied")
   }
 
   # Get df if not provided
@@ -488,14 +512,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
   # z1 ~ N(mu1, 1) and we reject if |z1| > efficacy_boundary
 
 
-  power_stage1 <- if (is.finite(df_s1)) {
-    b1_t <- qt(pnorm(efficacy_boundary), df = df_s1)
-    if (mu1 >= 0) pt(b1_t, df = df_s1, ncp = mu1, lower.tail = FALSE)
-    else          pt(-b1_t, df = df_s1, ncp = mu1)
-  } else {
-    if (mu1 >= 0) 1 - pnorm(efficacy_boundary - mu1)
-    else          pnorm(-efficacy_boundary - mu1)
-  }
+  power_stage1 <- stage1_power(efficacy_boundary, mu1, df_s1)
 
   # Stage 2 power: CP integrated over continuation region
   continue <- opt_designs$continue
@@ -609,10 +626,13 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
   model_list <- precompute_models(design_grid, model_fn, fixed_params,
                                   parallel = FALSE, n_cores = NULL, verbose = verbose)
 
-  I1_eff <- model_list[[1]]$I1_eff
-  I_eff <- model_list[[1]]$I_eff
-  b1 <- model_list[[1]]$b1
-  mu1 <- b1 * sqrt(I1_eff)
+  I1_all <- vapply(model_list, function(m) m$I1_eff, numeric(1))
+  b1_all <- vapply(model_list, function(m) m$b1,     numeric(1))
+  if (diff(range(I1_all)) > 1e-2 * mean(I1_all))
+    stop(sprintf("I1_eff varies across the stage 2 grid (%.6g to %.6g)",
+                 min(I1_all), max(I1_all)))
+  if (diff(range(b1_all)) > 1e-10) stop("b1 varies across the stage 2 grid")
+  I1_eff <- I1_all[1]; b1 <- b1_all[1]; mu1 <- b1 * sqrt(I1_eff)
   I1_eff <- model_list[[1]]$I1_eff
   I_eff <- model_list[[1]]$I_eff
   b1 <- model_list[[1]]$b1
@@ -625,17 +645,31 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
     mu1 <- b1 * sqrt(I1_eff)  # updated I1_eff with new ICC
     df_s1 <- Inf  # not used when overriding
   } else {
-    mu1 <- b1 * sqrt(I1_eff)
-    w1_ref <- sqrt(I1_eff / I_eff)
-    df_s1 <- model_list[[1]]$df_s1 %||% Inf
-    t_crit_s1 <- qt(0.975, df = df_s1)
+    df_s1     <- model_list[[1]]$df_s1 %||% Inf
+    t_crit_s1 <- qnorm(0.975)                        # see (3)
+    I2_all    <- vapply(model_list, function(m) m$I2_eff, numeric(1))
+    ms0       <- summarise_models(model_list, cost_fn, cost_params,
+                                  lambda_range[1], resource_vars)
+    eval_w1 <- function(w) compute_power_and_expectations(
+      design_grid, ms0, I1_eff, resource_vars, z1_range, n_quad,
+      w1_ref = w, df_s1 = df_s1, df_full = NULL,
+      c2 = calibrate_c2(w, t_crit_s1 / w, alpha = 0.05))$power$total
+    lo <- sqrt(I1_eff / (I1_eff + max(I2_all)))
+    hi <- sqrt(I1_eff / (I1_eff + min(I2_all)))
+    w1_ref <- if (isTRUE(all.equal(lo, hi))) lo
+    else optimize(function(w) -eval_w1(w), c(lo, hi))$minimum
     efficacy_boundary <- t_crit_s1 / w1_ref
   }
   futility <- match.arg(futility)
   c2 <- c2_fixed %||% c2_override %||%
     calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
 
-  power_stage1 <- pnorm(-efficacy_boundary - mu1) + (1 - pnorm(efficacy_boundary - mu1))
+  t_crit_s1 <- qnorm(0.975)                       # was qt(0.975, df = df_s1)
+  efficacy_boundary <- t_crit_s1 / w1_ref
+  efficacy_boundary_t <- if (is.finite(df_s1))    # what the trial's t stat is compared to
+    qt(pnorm(efficacy_boundary), df = df_s1) else efficacy_boundary
+  power_stage1 <- stage1_power(efficacy_boundary, mu1, df_s1)
+
   if (verbose) {
     cat(sprintf("Method: %s\n", method))
     cat(sprintf("df_s1 = %.0f, t_crit = %.3f\n", df_s1, t_crit_s1))
@@ -677,6 +711,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
         df_s1 = df_s1,
         t_crit_s1 = t_crit_s1,
         efficacy_boundary = efficacy_boundary,
+        efficacy_boundary_t = efficacy_boundary_t,
         futility_boundary = futility_boundary,
         c2 = c2,
         futility = futility,
