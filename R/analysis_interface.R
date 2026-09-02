@@ -1034,7 +1034,9 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   # invalidates the binding calibration of c2 (and, under H0, the design does
   # not affect P(reject | z1) at all, since Z_{2|1} ~ N(0,1) whichever g is
   # selected -- only the stopping rule enters the calibration).
-  protocol_futility <- z1_obs < futility_boundary
+  eff_sign <- r$results$params$eff_sign %||% 1
+  protocol_futility <- if (eff_sign > 0) z1_obs < futility_boundary
+  else              z1_obs > futility_boundary
 
   if (verbose && is.finite(futility_boundary)) {
     cat(sprintf("Futility boundary: z1 < %.3f (protocol)\n", futility_boundary))

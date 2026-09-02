@@ -687,8 +687,10 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
     od <- power_results$quadrature$optimal_designs
     zg <- power_results$quadrature$z1
     stopifnot(!is.null(od$futility_stop), length(zg) == length(od$futility_stop))
-    fz <- zg[od$futility_stop & zg < efficacy_boundary]
-    futility_boundary <- if (length(fz)) max(fz) else -Inf
+    eff_sign <- if (mu1 < 0) -1 else 1
+    fz <- zg[od$futility_stop & abs(zg) < efficacy_boundary]
+    futility_boundary <- if (!length(fz)) eff_sign * -Inf
+    else if (eff_sign > 0) max(fz) else min(fz)
     if (!is.finite(futility_boundary))
       warning("no futility region found on the quadrature grid; ",
               "protocol futility rule will never fire")
@@ -714,6 +716,7 @@ compute_power_and_expectations <- function(design_grid, model_summaries, I1_eff,
         efficacy_boundary_t = efficacy_boundary_t,
         futility_boundary = futility_boundary,
         c2 = c2,
+        eff_sign = eff_sign,
         futility = futility,
         lambda = lambda,
         cost_params = cost_params,
