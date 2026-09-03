@@ -960,12 +960,14 @@ get_decision_rules <- function(results, design_index = 1, z1_values = NULL) {
 #' @param recalibrate Logical indicating whether to recalibrate the lambda parameter
 #' @param target_power The target power
 #' @param verbose Print details
+#' @param override_stop Generates the stage 2 trial design for recommended stops
 #'
 #' @return An interim_result object with recommendation and conditional power
 #' @export
 interim_analysis <- function(planned, z1_obs, theta_hat = list(),
                              delta = NULL, recalibrate = TRUE,
-                             target_power = 0.8, verbose = TRUE) {
+                             target_power = 0.8, verbose = TRUE,
+                             override_stop = FALSE) {
 
   if (!inherits(planned, "adaptive_results")) {
     stop("planned must be an adaptive_results object from adaptive_analysis()")
@@ -991,6 +993,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   futility_conv <- r$results$params$futility %||% "nonbinding"
   b1_planned <- r$results$params$b1
   method <- r$method %||% "lambda"
+  dec <- "continue"
 
   if (is.null(delta)) delta <- b1_planned
 
@@ -1011,20 +1014,23 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   # --- Step 1: Check efficacy stopping ---
   if (abs(z1_obs) > efficacy_boundary) {
     if (verbose) cat("\n** RECOMMENDATION: Stop for efficacy **\n")
-    return(structure(list(
-      decision = "efficacy_stop",
-      z1 = z1_obs,
-      w1_ref = w1_ref,
-      weighted_statistic = w1_ref * z1_obs,
-      critical_value = c2,
-      c2 = c2,
-      efficacy_boundary = efficacy_boundary,
-      stage2_design = NULL,
-      conditional_power = NA,
-      futility = futility_conv,
-      message = sprintf("z1 = %.3f exceeds efficacy boundary %.3f",
-                        abs(z1_obs), efficacy_boundary)
-    ), class = "interim_result"))
+    dec <- "efficacy_stop"
+    if (!override_stop){
+      return(structure(list(
+        decision = dec,
+        z1 = z1_obs,
+        w1_ref = w1_ref,
+        weighted_statistic = w1_ref * z1_obs,
+        critical_value = c2,
+        c2 = c2,
+        efficacy_boundary = efficacy_boundary,
+        stage2_design = NULL,
+        conditional_power = NA,
+        futility = futility_conv,
+        message = sprintf("z1 = %.3f exceeds efficacy boundary %.3f",
+                          abs(z1_obs), efficacy_boundary)
+      ), class = "interim_result"))
+    }
   }
 
   # --- Step 1b: Protocol futility rule ---
@@ -1044,20 +1050,23 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
 
   if (protocol_futility) {
     if (verbose) cat("\n** RECOMMENDATION: Stop for futility (protocol rule) **\n")
-    return(structure(list(
-      decision = "futility_stop",
-      z1 = z1_obs,
-      w1_ref = w1_ref,
-      c2 = c2,
-      efficacy_boundary = efficacy_boundary,
-      futility_boundary = futility_boundary,
-      stage2_design = NULL,
-      conditional_power = NA_real_,
-      recalibrated = FALSE,
-      futility = futility_conv,
-      message = sprintf("z1 = %.3f below protocol futility boundary %.3f",
-                        z1_obs, futility_boundary)
-    ), class = "interim_result"))
+    dec <- "futility_stop"
+    if (!override_stop){
+      return(structure(list(
+        decision = dec,
+        z1 = z1_obs,
+        w1_ref = w1_ref,
+        c2 = c2,
+        efficacy_boundary = efficacy_boundary,
+        futility_boundary = futility_boundary,
+        stage2_design = NULL,
+        conditional_power = NA_real_,
+        recalibrated = FALSE,
+        futility = futility_conv,
+        message = sprintf("z1 = %.3f below protocol futility boundary %.3f",
+                          z1_obs, futility_boundary)
+      ), class = "interim_result"))
+    }
   }
 
   # --- Step 2: Rebuild models with updated parameters ---
@@ -1138,16 +1147,19 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
 
     if (!any(feasible)) {
       if (verbose) cat("\n** RECOMMENDATION: Stop for futility (no feasible designs) **\n")
-      return(structure(list(
-        decision = "futility_stop",
-        z1 = z1_obs,
-        w1_ref = w1_ref,
-        stage2_design = NULL,
-        conditional_power = 0,
-        recalibrated = recalibrate,
-        futility = futility_conv,
-        message = "No designs feasible within budget"
-      ), class = "interim_result"))
+      dec <- "futility_stop"
+      if (!override_stop){
+        return(structure(list(
+          decision = dec,
+          z1 = z1_obs,
+          w1_ref = w1_ref,
+          stage2_design = NULL,
+          conditional_power = 0,
+          recalibrated = recalibrate,
+          futility = futility_conv,
+          message = "No designs feasible within budget"
+        ), class = "interim_result"))
+      }
     }
 
     criterion <- ifelse(feasible, cp_vec, -Inf)
@@ -1156,16 +1168,19 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
 
     if (best_cp < 1e-12) {
       if (verbose) cat("\n** RECOMMENDATION: Stop for futility (negligible CP) **\n")
-      return(structure(list(
-        decision = "futility_stop",
-        z1 = z1_obs,
-        w1_ref = w1_ref,
-        stage2_design = as.list(design_grid[best_idx, ]),
-        conditional_power = best_cp,
-        recalibrated = recalibrate,
-        futility = futility_conv,
-        message = "Conditional power negligible within budget"
-      ), class = "interim_result"))
+      dec <- "futility_stop"
+      if (!override_stop){
+        return(structure(list(
+          decision = dec,
+          z1 = z1_obs,
+          w1_ref = w1_ref,
+          stage2_design = as.list(design_grid[best_idx, ]),
+          conditional_power = best_cp,
+          recalibrated = recalibrate,
+          futility = futility_conv,
+          message = "Conditional power negligible within budget"
+        ), class = "interim_result"))
+      }
     }
 
   } else {
@@ -1187,7 +1202,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   best_design <- as.list(design_grid[best_idx, ])
   best_mod <- model_list[[best_idx]]
 
-  if (verbose) {
+  if (verbose & dec == "continue") {
     cat(sprintf("\n** RECOMMENDATION: Continue to stage 2 **\n"))
     cat(sprintf("Conditional power: %.1f%%\n", best_cp * 100))
     cat(sprintf("Stage 2 cost: %.1f\n", cost_vec[best_idx]))
@@ -1215,7 +1230,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   all_designs$selected <- seq_len(n_designs) == best_idx
 
   structure(list(
-    decision = "continue",
+    decision = dec,
     z1 = z1_obs,
     w1_ref = w1_ref,
     w2 = w2_ref,
@@ -1241,7 +1256,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
       c2 = c2,
       b1 = b1_planned
     ),
-    message = "Continue to stage 2"
+    message = ifelse(dec == "continue", "Continue to stage 2", "Stop (with stage 2 calculated)")
   ), class = "interim_result")
 }
 
