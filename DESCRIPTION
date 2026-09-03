@@ -1,7 +1,7 @@
 Package: acrt
 Type: Package
 Title: Adaptive Cluster Randomised Trial Analysis
-Version: 0.3.3
+Version: 0.3.4
 Date: 2026-09-03
 Authors@R: 
     person(given = "Sam",
