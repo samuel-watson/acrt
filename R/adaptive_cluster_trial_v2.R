@@ -214,69 +214,95 @@ continuation_intervals <- function(z1_grid, continue_flag) {
 #' @param z1_vec Vector of z1 values
 #' @param model_summaries Data frame with I2_eff, w1, w2, b1 columns
 #' @return Matrix: rows = z1 values, cols = designs
-conditional_power_matrix <- function(z1_vec, model_summaries, c2 = NULL,
+conditional_power_matrix <- function(z1_vec, model_summaries,
+                                     w1_ref,
+                                     c2 = NULL,
                                      cp_direction = c("target", "both")) {
+
   cp_direction <- match.arg(cp_direction)
+
   nz <- length(z1_vec)
   ng <- nrow(model_summaries)
 
-  W1 <- matrix(model_summaries$w1, nz, ng, byrow = TRUE)
-  W2 <- matrix(model_summaries$w2, nz, ng, byrow = TRUE)
+  ## FIXED protocol combination weights
+  w2_ref <- sqrt(1 - w1_ref^2)
+
+  W1 <- matrix(w1_ref, nz, ng)
+  W2 <- matrix(w2_ref, nz, ng)
+
   Z1 <- matrix(z1_vec, nz, ng)
 
-  # Non-centrality parameter for z2|1
-  NCP2 <- matrix(model_summaries$b1 * sqrt(model_summaries$I2_eff), nz, ng, byrow = TRUE)
+  NCP2 <- matrix(
+    model_summaries$b1 * sqrt(model_summaries$I2_eff),
+    nz, ng, byrow = TRUE
+  )
 
-  # Degrees of freedom
   df_full <- model_summaries$df_full
-  if (is.null(df_full)) df_full <- rep(Inf, ng)
+  if (is.null(df_full))
+    df_full <- rep(Inf, ng)
 
-  # df for stage 2 conditional statistic
-  # This is the df that would be used for testing with stage 2 data
   df_s2 <- model_summaries$df_s2
-  if (is.null(df_s2)) df_s2 <- df_full
+  if (is.null(df_s2))
+    df_s2 <- df_full
 
-  # Critical values from full data df
-  if (is.null(c2)) c2 <- qnorm(0.975)
-  C2 <- matrix(c2, nz, ng, byrow = TRUE)
+  if (is.null(c2))
+    c2 <- qnorm(0.975)
 
-  # Thresholds for Z_{2|1} on the z scale
+  C2 <- matrix(c2, nz, ng)
+
   upper_z <- ( C2 - W1 * Z1) / W2
   lower_z <- (-C2 - W1 * Z1) / W2
 
-  # Section 3.1: Z_{2|1} = Phi^{-1}(F_{t_nu}(T_{2|1})), so the event
-  # {Z_{2|1} > u} is the event {T_{2|1} > qt(Phi(u), nu)}. Map the z-scale
-  # thresholds onto the t scale before evaluating the non-central t.
-  cp_mat <- matrix(NA, nz, ng)
+  cp_mat <- matrix(NA_real_, nz, ng)
 
   for (j in seq_len(ng)) {
+
     ncp_j <- NCP2[1, j]
     df_j  <- df_s2[j]
 
     if (is.finite(df_j)) {
-      upper_t <- qt(pmin(pmax(pnorm(upper_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
-      lower_t <- qt(pmin(pmax(pnorm(lower_z[, j]), 1e-15), 1 - 1e-15), df = df_j)
+      upper_t <- qt(
+        pmin(pmax(pnorm(upper_z[, j]), 1e-15), 1 - 1e-15),
+        df = df_j
+      )
+
+      lower_t <- qt(
+        pmin(pmax(pnorm(lower_z[, j]), 1e-15), 1 - 1e-15),
+        df = df_j
+      )
     } else {
       upper_t <- upper_z[, j]
       lower_t <- lower_z[, j]
     }
 
     if (cp_direction == "target") {
+
       s <- sign(ncp_j)
       if (s == 0) s <- 1
-      upper_s <- if (s > 0) upper_t else -lower_t
+
+      threshold <- if (s > 0) upper_t else -lower_t
+
       cp_mat[, j] <- suppressWarnings(
-        pt(upper_s, df = df_j, ncp = abs(ncp_j), lower.tail = FALSE))
+        pt(
+          threshold,
+          df = df_j,
+          ncp = abs(ncp_j),
+          lower.tail = FALSE
+        )
+      )
+
     } else {
+
       cp_mat[, j] <- suppressWarnings(
         pt(lower_t, df = df_j, ncp = ncp_j) +
-          pt(upper_t, df = df_j, ncp = ncp_j, lower.tail = FALSE))
+          pt(upper_t, df = df_j, ncp = ncp_j,
+             lower.tail = FALSE)
+      )
     }
   }
 
   cp_mat
 }
-
 # =============================================================================
 # Design Grid and Model Precomputation
 # =============================================================================
@@ -365,8 +391,18 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
                                  efficacy_boundary = NULL,
                                  cp_direction = NULL) {
 
-  cp_mat <- conditional_power_matrix(z1_vec, model_summaries, c2 = c2,
-                                     cp_direction = cp_direction)
+  ## Resolve protocol weight BEFORE calculating CP
+  if (is.null(w1_ref)) {
+    w1_ref <- model_summaries$w1[1]
+  }
+
+  cp_mat <- conditional_power_matrix(
+    z1_vec,
+    model_summaries,
+    w1_ref = w1_ref,
+    c2 = c2,
+    cp_direction = cp_direction
+  )
 
   if (is.null(cost_cap)) {
     # Original: λ-penalised criterion
@@ -401,10 +437,6 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
     }
   }
 
-  # --- everything below here is unchanged ---
-  if (is.null(w1_ref)) {
-    w1_ref <- model_summaries$w1[1]
-  }
 
   if (is.null(efficacy_boundary)) {
     efficacy_boundary <- qt(0.975, df = model_summaries$df_full[1]) / w1_ref
