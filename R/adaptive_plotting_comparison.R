@@ -232,6 +232,10 @@ plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
         label_text <- sprintf("%s\n%.0f%%", outcome, prob * 100)
       }
 
+      if (outcome == "Efficacy" && mid_z1 * mu1 < 0) {
+        label_text <- sub("^Efficacy", "Harm", label_text)
+      }
+
       p <- p + annotate("label",
                         x = mid_z1, y = 0.92,
                         label = label_text,
