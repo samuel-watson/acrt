@@ -26,3 +26,12 @@ A data frame of Pareto-optimal designs
 \description{
 Find Pareto frontier from adaptive analysis results
 }
+\examples{
+\donttest{
+design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 12:13,
+                       m1 = c(30, 40), k2 = 0:2, m2 = c(20, 30), rho = 30)
+results <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+                             method = "lambda", verbose = FALSE)
+find_pareto(results, objectives = list(E_N = "min", N_max = "min"))
+}
+}

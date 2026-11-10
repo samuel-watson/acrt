@@ -9,15 +9,22 @@
 #' @param stage1_params Character vector of stage 1 parameter names
 #' @param stage2_params Character vector of stage 2 parameter names
 #' @param resources Named list of formulas for resource calculation.
-#'        Names should follow convention: {resource_type}_{stage}
+#'        Names should follow the convention resource_stage,
 #'        e.g., n_s1, n_s2, clusters_s1, clusters_s2, periods_s2
 #' @param cost_structure Named list defining cost components:
 #'        - weights: named vector of cost weights (can reference 'rho')
-#'        - stage2_only: which resources are stage 2 only (for λ-calibration)
+#'        - stage2_only: which resources are stage 2 only (for lambda-calibration)
 #' @param model_builder Function to build the statistical model
 #' @param n_arms Number of arms (default 2)
 #' @param design_type Character string identifying the design type
 #' @return A crt_design_spec object
+#' @examples
+#' crt_design_spec(
+#'   stage1_params = c("k1", "m1"),
+#'   stage2_params = "m2",
+#'   resources = list(n_s1 = ~ n_arms * k1 * m1, n_s2 = ~ n_arms * k1 * m2),
+#'   model_builder = function(design_params, fixed_params) list()
+#' )
 #' @export
 crt_design_spec <- function(stage1_params,
                             stage2_params,
@@ -54,6 +61,7 @@ crt_design_spec <- function(stage1_params,
 #' @param formula A formula like ~ n_arms * k1 * m1
 #' @param env A list or environment with variable values
 #' @return Numeric result
+#' @noRd
 eval_resource <- function(formula, env) {
   if (is.null(formula)) return(0)
   if (inherits(formula, "formula")) {
@@ -69,6 +77,7 @@ eval_resource <- function(formula, env) {
 #' @param weight_spec Weight specification (number or variable name as string)
 #' @param env Environment with variables
 #' @return Numeric weight
+#' @noRd
 resolve_weight <- function(weight_spec, env) {
   if (is.numeric(weight_spec)) {
     return(weight_spec)
@@ -87,6 +96,7 @@ resolve_weight <- function(weight_spec, env) {
 #' @param resource_name Name like "n_s1", "clusters_s2"
 #' @param cost_weights Named vector of weights like c(n = 1, clusters = "rho")
 #' @return The matching weight name or NULL
+#' @noRd
 match_resource_type <- function(resource_name, cost_weights) {
   # Strip stage suffix to get base type
   base_name <- sub("_s[12]$|_stage[12]$", "", resource_name)
@@ -120,8 +130,9 @@ match_resource_type <- function(resource_name, cost_weights) {
 #' Generate cost function from specification
 #'
 #' @param spec A crt_design_spec object
-#' @param stage Which stage cost: "stage2" (for λ-calibration) or "total"
+#' @param stage Which stage cost: "stage2" (for lambda-calibration) or "total"
 #' @return A function with signature function(model_output, rho)
+#' @noRd
 generate_cost_fn <- function(spec, stage = c("stage2", "total")) {
   stage <- match.arg(stage)
 
@@ -185,6 +196,7 @@ generate_cost_fn <- function(spec, stage = c("stage2", "total")) {
 #'
 #' @param spec A crt_design_spec object
 #' @return A function with signature function(opt_designs, results, rho)
+#' @noRd
 generate_sample_size_fn <- function(spec) {
 
   resources <- spec$resources
@@ -341,6 +353,7 @@ generate_sample_size_fn <- function(spec) {
 #'
 #' @param spec A crt_design_spec object
 #' @return A factory function that creates model functions with fresh caches
+#' @noRd
 generate_model_factory <- function(spec) {
 
   model_builder <- spec$model_builder
@@ -365,6 +378,7 @@ generate_model_factory <- function(spec) {
 #'
 #' @param spec A crt_design_spec object
 #' @return A model builder function for single-stage designs
+#' @noRd
 generate_fixed_model_builder <- function(spec) {
 
   # The fixed model builder combines stage 1 and stage 2 into one
@@ -375,7 +389,7 @@ generate_fixed_model_builder <- function(spec) {
   } else if (spec$design_type == "crossover") {
     return(fixed_crossover_model_builder)
   } else if (spec$design_type == "stepped_wedge") {
-    return(fixed_sw_model_builder)
+    return(fixed_stepped_wedge_model_builder)
   }
 
   # Generic fallback - user must provide
@@ -386,6 +400,7 @@ generate_fixed_model_builder <- function(spec) {
 #'
 #' @param spec A crt_design_spec object
 #' @return A cost function for single-stage designs
+#' @noRd
 generate_fixed_cost_fn <- function(spec) {
 
   resources <- spec$resources
@@ -405,5 +420,3 @@ generate_fixed_cost_fn <- function(spec) {
   }
 }
 
-# Null coalescing operator
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x

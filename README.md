@@ -9,6 +9,34 @@ vignette('adaptive_stepped_wedge', package = 'acrt')
 vignette('adaptive_crossover', package = 'acrt')
 ```
 
+## Analysing a trial
+Once a trial is under way, the design object drives the analysis. `analysis_plan()` takes the outcome family, combination weights and boundaries from the design, and the estimation functions compute the stage-wise score statistics, point estimates and repeated confidence intervals. Binomial, Poisson and Gaussian outcomes are supported.
+```
+# `planned` is adaptive_analysis() for the single stage 1 design chosen for the trial
+plan <- analysis_plan(
+  planned,
+  schedule = rbind(c(0, 1, 0, 1),    # sequence 1: intervention indicator by period
+                   c(1, 0, 1, 0)),   # sequence 2
+  stage1 = 1:2,
+  strata = "country"
+)
+
+# alloc:  one row per randomised cluster: cluster, sequence, country
+# data_*: individual-level (cluster, period, outcome) or
+#         cluster-period (cluster, period, y, m) data
+int <- interim_statistic(plan, data_interim, alloc)
+dec <- interim_decision(int)      # stop or continue, and the stage 2 design
+
+fin <- final_statistic(int, data_final)
+est <- effect_estimates(fin)      # or effect_estimates(int) if stopped at the interim
+```
+The `adaptive` row of `est` holds the repeated confidence interval. The other rows give stage-wise and unadjusted results.
+
+Period effects are added automatically when treatment is confounded with calendar time, as in a stepped-wedge design. Set `period_effects = "fixed"` or `"none"` to choose explicitly. A complete worked example, from design through a simulated trial to the final analysis, is in
+```
+system.file("examples", "design_to_analysis.R", package = "acrt")
+```
+
 ## Parallel trial example
 The code below reproduces the parallel trial example from the paper:
 ```

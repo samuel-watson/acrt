@@ -11,7 +11,8 @@ interim_analysis(
   delta = NULL,
   recalibrate = TRUE,
   target_power = 0.8,
-  verbose = TRUE
+  verbose = TRUE,
+  override_stop = FALSE
 )
 }
 \arguments{
@@ -28,6 +29,8 @@ interim_analysis(
 \item{target_power}{The target power}
 
 \item{verbose}{Print details}
+
+\item{override_stop}{Generates the stage 2 trial design for recommended stops}
 }
 \value{
 An interim_result object with recommendation and conditional power
@@ -35,4 +38,14 @@ An interim_result object with recommendation and conditional power
 \description{
 Uses pre-planned combination test weights but re-evaluates stage 2
 designs using interim estimates of auxiliary parameters.
+}
+\examples{
+\donttest{
+design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+                       k2 = 0:2, m2 = c(20, 30), rho = 30)
+planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+                             method = "lambda", verbose = FALSE)
+interim_analysis(planned, z1_obs = 1.5, theta_hat = list(icc = 0.03),
+                 verbose = FALSE)
+}
 }

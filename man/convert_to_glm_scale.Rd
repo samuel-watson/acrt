@@ -29,3 +29,6 @@ List with beta, covariance, family object, and scale info
 \description{
 Convert parameters to GLM scale for different families
 }
+\examples{
+convert_to_glm_scale("binomial", baseline = 0.3, delta = -0.1, icc = 0.05, cac = 0.8)
+}

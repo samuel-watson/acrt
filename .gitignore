@@ -3,3 +3,6 @@
 .RData
 .Ruserdata
 arct.Rproj
+inst/doc
+/doc/
+/Meta/

@@ -19,3 +19,12 @@ Data frame of decision rules
 \description{
 Get decision rules from results
 }
+\examples{
+\donttest{
+design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+                       k2 = 0:2, m2 = c(20, 30), rho = 30)
+planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+                             method = "lambda", verbose = FALSE)
+head(get_decision_rules(planned))
+}
+}

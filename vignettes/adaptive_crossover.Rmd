@@ -23,11 +23,20 @@ library(Matrix)
 
 # Load precomputed results for expensive operations
 load("crossover_vignette_precomputed.rda")
+
+# Plots are drawn here from the saved results, so they follow the installed ggplot2
+p_EN <- plot(results, type = "EN")
+p_Nmax <- plot(results, type = "Nmax")
+p_pareto <- plot(results, type = "pareto",
+                 objectives = list(E_cost = "min", max_cost = "min"))
+p_decision <- plot(results_single, type = "decision")
+p_sens_decision <- plot(sens, type = "decision")
+p_sens_cost <- plot(sens, type = "cost")
 ```
 
 ## Introduction
 
-This vignette demonstrates how to design and analyse an **adaptive crossover cluster randomised trial** with a binary outcome using `adaptiveCRT`. In a crossover CRT, clusters receive both the intervention and control in different time periods, which can substantially improve efficiency compared to a parallel design. The adaptive element allows the trial to modify the stage 2 design --- the number of additional time periods ($t_2$), cluster-period sample size ($m_2$), and number of new clusters ($k_2$) --- based on interim results.
+This vignette demonstrates how to design and analyse an **adaptive crossover cluster randomised trial** with a binary outcome using `acrt`. In a crossover CRT, clusters receive both the intervention and control in different time periods, which can substantially improve efficiency compared to a parallel design. The adaptive element allows the trial to modify the stage 2 design --- the number of additional time periods ($t_2$), cluster-period sample size ($m_2$), and number of new clusters ($k_2$) --- based on interim results.
 
 We consider a trial with the following features:
 
@@ -284,7 +293,7 @@ crossover_crt <- function(icc, cac = 0.8, delta,
 
 ## Creating the design constructor
 
-The `crossover_crt()` constructor specifies the resource formulas and cost structure. In a crossover trial, the stage 2 cost depends on observations from both existing clusters (continuing into new periods) and any newly recruited clusters. We include separate cost weights for observations ($1$), new clusters ($\rho = 300$), and additional time periods ($\rho_t = 30$).
+The `crossover_crt()` constructor, defined above for this vignette, specifies the resource formulas and cost structure. In a crossover trial, the stage 2 cost depends on observations from both existing clusters (continuing into new periods) and any newly recruited clusters. We include separate cost weights for observations ($1$), new clusters ($\rho = 300$), and additional time periods ($\rho_t = 30$).
 
 ```{r constructor, eval = FALSE}
 design <- crossover_crt(

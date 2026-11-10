@@ -16,6 +16,7 @@
 #' @param show_density Show z1 density under H1 (default TRUE)
 #' @param title Custom title
 #' @return A ggplot or patchwork object
+#' @noRd
 plot_decision_rules <- function(results,
                                 design_vars = NULL,
                                 design_index = 1,
@@ -130,7 +131,7 @@ plot_decision_rules <- function(results,
 }
 
 #' Extract raw results from various input formats
-#' @keywords internal
+#' @noRd
 extract_raw_results <- function(results, design_index = 1) {
   if (inherits(results, "adaptive_results")) {
     if (results$explored) {
@@ -148,7 +149,7 @@ extract_raw_results <- function(results, design_index = 1) {
 }
 
 #' Find decision boundaries from plot data
-#' @keywords internal
+#' @noRd
 find_decision_boundaries <- function(plot_data) {
   boundaries <- list()
 
@@ -165,7 +166,7 @@ find_decision_boundaries <- function(plot_data) {
 }
 
 #' Main decision plot showing regions and density
-#' @keywords internal
+#' @noRd
 plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
                                 p_efficacy, p_futility, p_continue,
                                 total_power, show_density, title,
@@ -248,12 +249,12 @@ plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
   # Add overall probabilities to subtitle instead
   # Build subtitle
   subtitle <- sprintf(
-    "Overall power: %.1f%%   |   μ₁ = %.2f",
+    "Overall power: %.1f%%   |   \u03bc\u2081 = %.2f",
     total_power * 100, mu1
   )
 
   if (!is.null(efficacy_boundary)) {
-    subtitle <- paste0(subtitle, sprintf("   |   Efficacy: |z₁| > %.2f", efficacy_boundary))
+    subtitle <- paste0(subtitle, sprintf("   |   Efficacy: |z\u2081| > %.2f", efficacy_boundary))
   }
 
   p +
@@ -284,7 +285,7 @@ plot_decisions_main <- function(plot_data, boundaries, palette, mu1,
 }
 
 #' Find contiguous blocks of outcomes with extended boundaries
-#' @keywords internal
+#' @noRd
 find_contiguous_blocks <- function(z1, outcome) {
   n <- length(z1)
   if (n == 0) return(data.frame(outcome = character(), z1_min = numeric(), z1_max = numeric()))
@@ -324,7 +325,7 @@ find_contiguous_blocks <- function(z1, outcome) {
 }
 
 #' Create design variable plots
-#' @keywords internal
+#' @noRd
 create_design_plots <- function(plot_data, design_vars, boundaries, palette) {
 
   design_plots <- lapply(design_vars, function(var) {
@@ -366,6 +367,7 @@ create_design_plots <- function(plot_data, design_vars, boundaries, palette) {
 #' @param design_index For explored results, which design to plot
 #' @param title Custom title
 #' @return A ggplot object
+#' @noRd
 plot_decision_rules_compact <- function(results,
                                         design_var = NULL,
                                         design_index = 1,
@@ -515,8 +517,6 @@ plot_decision_rules_compact <- function(results,
     )
 }
 
-# Null coalescing
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
 # =============================================================================
 # Sample Size Plotting
@@ -526,6 +526,7 @@ plot_decision_rules_compact <- function(results,
 #' @param ss Output from compute_sample_size or compare_sample_sizes
 #' @param type "histogram" (default), "cumulative", or "both"
 #' @param show_outcomes Colour by outcome type (default TRUE)
+#' @noRd
 plot_sample_size <- function(ss, type = c("histogram", "cumulative", "both"),
                              show_outcomes = TRUE) {
 
@@ -621,6 +622,7 @@ plot_sample_size <- function(ss, type = c("histogram", "cumulative", "both"),
 }
 
 #' Plot sample size comparison (H0 vs H1)
+#' @noRd
 plot_sample_size_comparison <- function(ss_compare, type, show_outcomes) {
 
 
@@ -702,6 +704,7 @@ plot_sample_size_comparison <- function(ss_compare, type, show_outcomes) {
 #' @param results Output from find_lambda_for_power
 #' @param sample_size_fn Sample size function
 #' @param ... Additional arguments passed to sample_size_fn
+#' @noRd
 compare_sample_sizes <- function(results, sample_size_fn, ...) {
 
   ss_h1 <- compute_sample_size(results, sample_size_fn, hypothesis = "H1", ...)
@@ -724,12 +727,24 @@ compare_sample_sizes <- function(results, sample_size_fn, ...) {
 # Design Space Plotting
 # =============================================================================
 
+# Long format of the three decision probabilities, one row per outcome.
+.stack_probabilities <- function(df) {
+  cols <- c(efficacy = "prob_efficacy", futility = "prob_futility",
+            continue = "prob_continue")
+  long <- df[rep(seq_len(nrow(df)), times = 3L),
+             setdiff(names(df), cols), drop = FALSE]
+  long$outcome <- rep(names(cols), each = nrow(df))
+  long$probability <- unlist(df[cols], use.names = FALSE)
+  long
+}
+
 #' Plot design space exploration results
 #'
 #' @param exploration Output from explore_design_space
 #' @param type "EN", "Nmax", "clusters", "power", "probabilities", or "all"
 #' @param x_var Variable for x-axis (default: "power_stage1")
 #' @param group_var Variable for grouping/colour (default: first column of stage1_grid)
+#' @noRd
 plot_design_space <- function(exploration,
                               type = c("EN", "Nmax", "clusters", "power", "probabilities", "all"),
                               x_var = "power_stage1",
@@ -762,7 +777,7 @@ plot_design_space <- function(exploration,
   n_groups <- length(all_levels)
 
   palette_groups <- c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51")[1:min(n_groups, 5)]
-  if (n_groups > 5) palette_groups <- viridis::viridis(n_groups)
+  if (n_groups > 5) palette_groups <- grDevices::hcl.colors(n_groups, "viridis")
 
   palette_outcome <- c("Efficacy stop" = "#2d6a4f",
                        "Futility stop" = "#ae2012",
@@ -861,13 +876,7 @@ plot_design_space <- function(exploration,
   # Probabilities plot
   p_probs <- if (all(c("prob_efficacy", "prob_futility", "prob_continue") %in% names(df))) {
     # Pivot converged data
-    df_long <- tidyr::pivot_longer(
-      df_conv,
-      cols = c(prob_efficacy, prob_futility, prob_continue),
-      names_to = "outcome",
-      values_to = "probability",
-      names_prefix = "prob_"
-    )
+    df_long <- .stack_probabilities(df_conv)
     df_long$outcome <- factor(
       df_long$outcome,
       levels = c("efficacy", "continue", "futility"),
@@ -880,13 +889,7 @@ plot_design_space <- function(exploration,
 
     # Add non-converged points to probabilities facets
     if (has_failures && all(c("prob_efficacy", "prob_futility", "prob_continue") %in% names(df_fail))) {
-      df_fail_long <- tidyr::pivot_longer(
-        df_fail,
-        cols = c(prob_efficacy, prob_futility, prob_continue),
-        names_to = "outcome",
-        values_to = "probability",
-        names_prefix = "prob_"
-      )
+      df_fail_long <- .stack_probabilities(df_fail)
       df_fail_long$outcome <- factor(
         df_fail_long$outcome,
         levels = c("efficacy", "continue", "futility"),
@@ -948,6 +951,7 @@ plot_design_space <- function(exploration,
 #' @param exploration Output from explore_design_space
 #' @param z_var Variable for fill colour
 #' @param x_var, y_var Variables for axes (default: first two stage1 vars)
+#' @noRd
 plot_design_heatmap <- function(exploration,
                                 z_var = "E_N",
                                 x_var = NULL,
@@ -969,7 +973,7 @@ plot_design_heatmap <- function(exploration,
     N_max = "Maximum N",
     E_total_clusters = "E[clusters]",
     E_clusters = "E[clusters]",
-    lambda = "Optimal λ",
+    lambda = "Optimal \u03bb",
     power_stage1 = "Stage 1 power"
   )
 
@@ -1003,6 +1007,7 @@ plot_design_heatmap <- function(exploration,
 #' @param cost_params Cost parameters
 #' @param verbose Print progress
 #' @return List with optimal design and all evaluated designs
+#' @noRd
 find_optimal_fixed_design <- function(target_power = 0.8,
                                       design_grid,
                                       model_fn_factory,
@@ -1085,221 +1090,8 @@ find_optimal_fixed_design <- function(target_power = 0.8,
   )
 }
 
-#' Compare adaptive design to optimal fixed design
-#'
-#' @param results An adaptive_results object
-#' @param fixed_grid Data frame of fixed design parameters to search over.
-#'        If NULL, auto-generated based on design type.
-#' @param fixed_model_fn Custom fixed model function. If NULL, uses design-type default.
-#' @param fixed_cost_fn Custom fixed cost function. If NULL, uses design-type default.
-#' @param verbose Print progress
-#'
-#' @return A comparison object with comparison metrics
-#' @export
-compare_to_fixed <- function(results,
-                             fixed_grid = NULL,
-                             fixed_model_fn = NULL,
-                             fixed_cost_fn = NULL,
-                             verbose = TRUE) {
-
-  if (!inherits(results, "adaptive_results")) {
-    stop("results must be an adaptive_results object")
-  }
-
-  design <- results$design
-  spec <- design$spec
-  rho <- design$rho
-
-  # Get design-type-specific defaults if not provided
-  fixed_defaults <- get_fixed_design_defaults(design, results$target_power)
-
-  if (is.null(fixed_grid)) {
-    fixed_grid <- fixed_defaults$grid
-    if (verbose) {
-      cat("Using default fixed design grid for", spec$design_type, "design:\n")
-      cat("  Parameters:", paste(names(fixed_grid), collapse = ", "), "\n")
-      cat("  Grid size:", nrow(fixed_grid), "designs\n\n")
-    }
-  }
-
-  if (is.null(fixed_model_fn)) {
-    fixed_model_fn <- fixed_defaults$model_fn
-    if (is.null(fixed_model_fn)) {
-      stop("No default fixed model function for design type '", spec$design_type,
-           "'. Please provide fixed_model_fn.")
-    }
-  }
-
-  if (is.null(fixed_cost_fn)) {
-    fixed_cost_fn <- fixed_defaults$cost_fn
-    if (is.null(fixed_cost_fn)) {
-      # Generic fallback
-      fixed_cost_fn <- function(model_output, rho) {
-        model_output$total_cost %||% model_output$n_total %||% 0
-      }
-    }
-  }
-
-  if (verbose) cat("Finding optimal fixed design...\n")
-
-  fixed_result <- find_optimal_fixed_design(
-    target_power = results$target_power,
-    design_grid = fixed_grid,
-    model_fn_factory = function() fixed_model_fn,
-    fixed_params_base = design$fixed_params,
-    cost_fn = fixed_cost_fn,
-    cost_params = list(rho = rho),
-    verbose = verbose
-  )
-
-  if (verbose) {
-    cat("\nOptimal fixed design:\n")
-    print(fixed_result$optimal)
-  }
-
-  # Build comparison data
-  if (results$explored) {
-    df <- results$raw$summary
-    fixed_cost <- fixed_result$optimal$cost
-
-    # Ensure cost columns exist
-    if (!"E_cost" %in% names(df)) {
-      df <- add_sample_size_metrics_to_df(df, results)
-    }
-
-    if (!"E_cost" %in% names(df)) {
-      warning("E_cost not found; using E_N as proxy")
-      df$E_cost <- df$E_N
-      df$max_cost <- df$N_max
-    }
-
-    df$fixed_cost <- fixed_cost
-    df$fixed_power <- fixed_result$optimal$power
-    df$E_cost_ratio <- df$E_cost / fixed_cost
-    df$max_cost_ratio <- df$max_cost / fixed_cost
-    df$E_savings_pct <- (1 - df$E_cost_ratio) * 100
-    df$max_within_fixed <- df$max_cost <= fixed_cost
-
-    comparison_df <- df
-  } else {
-    # Single design comparison
-    ss <- compute_sample_size(results$raw$results, results$sample_size_fn, "H1")
-    E_cost <- ss$summary$value[ss$summary$metric == "E_cost"]
-    max_cost <- ss$summary$value[ss$summary$metric == "max_cost"]
-
-    if (length(E_cost) == 0) E_cost <- ss$summary$value[ss$summary$metric == "E_N"]
-    if (length(max_cost) == 0) max_cost <- ss$summary$value[ss$summary$metric == "N_max"]
-
-    fixed_cost <- fixed_result$optimal$cost
-
-    comparison_df <- data.frame(
-      E_cost = E_cost,
-      max_cost = max_cost,
-      fixed_cost = fixed_cost,
-      E_cost_ratio = E_cost / fixed_cost,
-      max_cost_ratio = max_cost / fixed_cost,
-      E_savings_pct = (1 - E_cost / fixed_cost) * 100,
-      max_within_fixed = max_cost <= fixed_cost
-    )
-  }
-
-  structure(
-    list(
-      comparison = comparison_df,
-      fixed = fixed_result,
-      adaptive = results,
-      stage1_grid = design$stage1_grid,
-      rho = rho
-    ),
-    class = "adaptive_comparison"
-  )
-}
-
-#' Get default fixed design configuration for a design type
-#' @keywords internal
-get_fixed_design_defaults <- function(design, target_power) {
-
-  spec <- design$spec
-  rho <- design$rho
-  stage1_grid <- design$stage1_grid
-  fixed_params <- design$fixed_params
-
-  if (spec$design_type == "parallel") {
-    # Parallel: vary k and m
-    k_vals <- unique(stage1_grid$k1)
-    m_vals <- unique(stage1_grid$m1)
-
-    grid <- expand.grid(
-      k = seq(min(k_vals), ceiling(max(k_vals) * 1.5), by = 1),
-      m = seq(min(m_vals), ceiling(max(m_vals) * 2), by = 5)
-    )
-
-    model_fn <- fixed_parallel_model_builder
-
-    cost_fn <- function(model_output, rho) {
-      n_cost <- model_output$n_total
-      k_cost <- model_output$k * 2
-      n_cost + rho * k_cost
-    }
-
-  } else if (spec$design_type == "crossover") {
-    # Crossover: vary k and m
-    k_vals <- unique(stage1_grid$k1)
-    m_vals <- unique(stage1_grid$m1)
-
-    grid <- expand.grid(
-      k = seq(min(k_vals), ceiling(max(k_vals) * 1.5), by = 1),
-      m = seq(min(m_vals), ceiling(max(m_vals) * 2), by = 5)
-    )
-
-    model_fn <- fixed_crossover_model_builder
-
-    cost_fn <- function(model_output, rho) {
-      n_cost <- model_output$n_total
-      k_cost <- model_output$k * 2
-      n_cost + rho * k_cost
-    }
-
-  } else if (spec$design_type == "stepped_wedge") {
-    # Stepped-wedge: K is typically fixed, vary T (total periods) and possibly m
-    K <- unique(stage1_grid$K)[1]
-    t1_vals <- unique(stage1_grid$t1)
-    m_val <- unique(stage1_grid$m)[1]
-
-    # For fixed SW, we vary total time periods
-    # The "fixed" comparison is a complete SW with no interim
-    grid <- expand.grid(
-      K = K,
-      T_total = seq(max(t1_vals), max(t1_vals) * 3, by = 1),
-      m = m_val
-    )
-
-    model_fn <- fixed_stepped_wedge_model_builder
-
-    cost_fn <- function(model_output, rho) {
-      n_cost <- model_output$n_total
-      t_cost <- model_output$T_total
-      n_cost + rho * t_cost
-    }
-
-  } else {
-    # Unknown design type - return NULL, user must provide
-    return(list(
-      grid = NULL,
-      model_fn = NULL,
-      cost_fn = NULL
-    ))
-  }
-
-  list(
-    grid = grid,
-    model_fn = model_fn,
-    cost_fn = cost_fn
-  )
-}
-
 #' Fixed stepped-wedge model builder
-#' @keywords internal
+#' @noRd
 fixed_stepped_wedge_model_builder <- function(design_params, fixed_params) {
 
   K <- design_params$K
@@ -1337,7 +1129,7 @@ fixed_stepped_wedge_model_builder <- function(design_params, fixed_params) {
 
   v1 <- c(icc * cac, icc * (1 - cac))
 
-  mod <- Model$new(
+  mod <- glmmrBase::Model$new(
     as.formula("~ factor(t) + trt + (1|gr(cl)) + (1|gr(cl,t))"),
     data = df,
     family = gaussian(),
@@ -1351,9 +1143,9 @@ fixed_stepped_wedge_model_builder <- function(design_params, fixed_params) {
   D <- mod$covariance$D
   Z <- mod$covariance$Z
 
-  Z_sp <- Matrix(Z, sparse = TRUE)
-  D_sp <- Matrix(D, sparse = TRUE)
-  S <- Diagonal(x = 1/mod$w_matrix()) + Z_sp %*% tcrossprod(D_sp, Z_sp)
+  Z_sp <- Matrix::Matrix(Z, sparse = TRUE)
+  D_sp <- Matrix::Matrix(D, sparse = TRUE)
+  S <- Matrix::Diagonal(x = 1/mod$w_matrix()) + Z_sp %*% Matrix::tcrossprod(D_sp, Z_sp)
   V <- as.matrix(S)
 
   V_inv_X <- solve(V, X)
@@ -1377,7 +1169,7 @@ fixed_stepped_wedge_model_builder <- function(design_params, fixed_params) {
 }
 
 #' Fixed crossover model builder
-#' @keywords internal
+#' @noRd
 fixed_crossover_model_builder <- function(design_params, fixed_params) {
 
   k <- design_params$k
@@ -1387,7 +1179,7 @@ fixed_crossover_model_builder <- function(design_params, fixed_params) {
   delta <- fixed_params$delta
 
   # Two-period crossover
-  df <- nelder(as.formula(paste0("~ int(2) > cl(", k, ") > t(2)")))
+  df <- glmmrBase::nelder(as.formula(paste0("~ int(2) > cl(", k, ") > t(2)")))
   df$int <- df$int - 1
   df$t <- df$t - 1
   df$trt <- ifelse((df$int == 0 & df$t == 1) | (df$int == 1 & df$t == 0), 1, 0)
@@ -1395,7 +1187,7 @@ fixed_crossover_model_builder <- function(design_params, fixed_params) {
 
   v1 <- c(icc * cac, icc * (1 - cac))
 
-  mod <- Model$new(
+  mod <- glmmrBase::Model$new(
     ~ factor(t) + trt + (1|gr(cl)) + (1|gr(cl,t)),
     data = df,
     family = gaussian(),
@@ -1409,9 +1201,9 @@ fixed_crossover_model_builder <- function(design_params, fixed_params) {
   D <- mod$covariance$D
   Z <- mod$covariance$Z
 
-  Z_sp <- Matrix(Z, sparse = TRUE)
-  D_sp <- Matrix(D, sparse = TRUE)
-  S <- Diagonal(x = 1/mod$w_matrix()) + Z_sp %*% tcrossprod(D_sp, Z_sp)
+  Z_sp <- Matrix::Matrix(Z, sparse = TRUE)
+  D_sp <- Matrix::Matrix(D, sparse = TRUE)
+  S <- Matrix::Diagonal(x = 1/mod$w_matrix()) + Z_sp %*% Matrix::tcrossprod(D_sp, Z_sp)
   V <- as.matrix(S)
 
   V_inv_X <- solve(V, X)
@@ -1432,6 +1224,7 @@ fixed_crossover_model_builder <- function(design_params, fixed_params) {
 #'
 #' @param comparison Output from compare_to_fixed
 #' @param type "cost_ratio", "savings", "frontier", or "all"
+#' @noRd
 plot_fixed_comparison <- function(comparison,
                                   type = c("cost_ratio", "savings", "frontier", "all")) {
 
@@ -1476,7 +1269,7 @@ plot_fixed_comparison <- function(comparison,
     scale_colour_manual(values = palette_groups) +
     scale_shape_manual(values = c("TRUE" = 19, "FALSE" = 1),
                        labels = c("TRUE" = "Yes", "FALSE" = "No"),
-                       name = "Max ≤ fixed") +
+                       name = "Max \u2264 fixed") +
     scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
     labs(
       x = "Stage 1 power",
@@ -1528,6 +1321,7 @@ plot_fixed_comparison <- function(comparison,
 #'
 #' @param pareto_df Output from find_constrained_pareto
 #' @return Summary data frame (invisibly)
+#' @noRd
 summarise_pareto <- function(pareto_df) {
 
   obj_list <- attr(pareto_df, "objectives")
@@ -1566,8 +1360,6 @@ summarise_pareto <- function(pareto_df) {
   invisible(summary_df)
 }
 
-# Null coalescing operator
-`%||%` <- function(x, y) if (is.null(x)) y else x
 
 plot_cost_distribution <- function(results_lambda = NULL,
                                    results_cap = NULL,

@@ -8,7 +8,7 @@ interim_sensitivity(
   planned,
   scenarios,
   delta = NULL,
-  z1_range = c(-3, 4),
+  z1_range = NULL,
   n_z1 = 200,
   include_planned = TRUE,
   target_power = 0.8
@@ -22,19 +22,30 @@ e.g. list("ICC = 0.03" = list(icc = 0.03), "ICC = 0.05" = list(icc = 0.05))}
 
 \item{delta}{Treatment effect for CP (NULL = use planned)}
 
-\item{z1_range}{Range of z1 values to evaluate}
+\item{z1_range}{Range of z1 values to evaluate. Defaults to the planned stage 1 mean plus or minus 8.}
 
 \item{n_z1}{Number of z1 points}
 
-\item{type}{What to plot: "cost", "cp", "design", "all"}
+\item{include_planned}{Whether to include the planned design as a scenario}
 
-\item{show_density}{Overlay density of z1 under H1}
+\item{target_power}{Target power used when recalibrating each scenario}
 }
 \value{
-A ggplot or list of ggplots
+An \code{interim_sensitivity} object, with a \code{plot()} method.
 }
 \description{
 For each scenario of auxiliary parameters, computes the optimal stage 2
 design across a grid of z1 values using pre-planned weights. Useful for
 showing sensitivity of decision rules to interim estimates.
+}
+\examples{
+\donttest{
+design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+                       k2 = 0:2, m2 = c(20, 30), rho = 30)
+planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+                             method = "lambda", verbose = FALSE)
+sens <- interim_sensitivity(planned, scenarios = list(low = list(icc = 0.03)),
+                            n_z1 = 50)
+plot(sens, type = "cp")
+}
 }

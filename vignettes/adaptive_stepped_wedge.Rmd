@@ -23,11 +23,21 @@ library(Matrix)
 
 # Load precomputed results for expensive operations
 load("sw_vignette_precomputed.rda")
+
+# Plots are drawn here from the saved results, so they follow the installed ggplot2
+p_EN <- plot(results, type = "EN")
+p_Nmax <- plot(results, type = "Nmax")
+p_pareto <- plot(results, type = "pareto",
+                 objectives = list(E_cost = "min", max_cost = "min"))
+p_decision <- plot(results_single, type = "decision")
+p_sens_decision <- plot(sens, type = "decision")
+p_sens_cp <- plot(sens, type = "cp")
+p_sens_all <- plot(sens, type = "all")
 ```
 
 ## Introduction
 
-The built-in design constructors in `adaptiveCRT` --- `parallel_crt()`, `crossover_crt()`, and `stepped_wedge_crt()` --- cover a range of standard trial layouts. However, many real trials require bespoke designs that don't fit neatly into these templates. This vignette walks through a complete example of building a **custom adaptive stepped-wedge cluster randomised trial** with a binomial outcome, demonstrating:
+The built-in `parallel_crt()` constructor in `acrt` covers the standard two-arm parallel layout. Many real trials require bespoke designs that it does not cover. This vignette walks through a complete example of building a **custom adaptive stepped-wedge cluster randomised trial** with a binomial outcome, demonstrating:
 
 - How to write a custom `model_builder` function
 - How to wrap it in a design constructor

@@ -1,8 +1,7 @@
 Package: acrt
 Type: Package
 Title: Adaptive Cluster Randomised Trial Analysis
-Version: 0.3.4
-Date: 2026-09-03
+Version: 0.4.1
 Authors@R: 
     person(given = "Sam",
            family = "Watson",
@@ -14,26 +13,34 @@ Description: Analysis of adaptive cluster randomised trials including
  interim analysis methods, and a range of plotting tools.
 License: CC BY-SA 4.0 
 Encoding: UTF-8
-LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
-Biarch: true
+RoxygenNote: 7.3.3
 Depends: 
     R (>= 3.5.0)
 Imports: 
     glmmrBase (>= 1.1.0),
+    statmod,
     Matrix,
-    ggplot2
+    ggplot2,
+    scales,
+    stats,
+    utils,
+    grDevices
 Collate:
-  "adaptive_cluster_trial_v2.R"
+  "adaptive_cluster_trial.R"
   "design_spec.R" 
   "design_templates.R"
-  "adaptive_design_space_v2.R"
+  "adaptive_design_space.R"
   "analysis_interface.R"
+  "estimation.R"
   "adaptive_plotting_comparison.R"
   "acrt.R"
 Config/Needs/website: rmarkdown
+Config/testthat/edition: 3
 Suggests: 
     knitr,
-    rmarkdown
+    testthat (>= 3.0.0),
+    rmarkdown,
+    patchwork,
+    pbapply
 VignetteBuilder: knitr

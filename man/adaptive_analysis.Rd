@@ -9,11 +9,12 @@ adaptive_analysis(
   target_power = 0.8,
   explore = TRUE,
   verbose = TRUE,
+  futility = c("nonbinding", "binding"),
   ...
 )
 }
 \arguments{
-\item{design}{A crt_design object created by parallel_crt(), crossover_crt(), etc.}
+\item{design}{A crt_design object, for example from parallel_crt()}
 
 \item{target_power}{Target overall power (default 0.8)}
 
@@ -22,7 +23,10 @@ If FALSE, only analyse the first stage 1 design.}
 
 \item{verbose}{Print progress messages}
 
-\item{...}{Additional arguments passed to find_lambda_for_power}
+\item{futility}{Whether the futility boundary is treated as "nonbinding"
+(the default) or "binding" when calibrating the final boundary.}
+
+\item{...}{Additional arguments passed to \code{\link[=find_lambda_for_power]{find_lambda_for_power()}}}
 }
 \value{
 An adaptive_results object with methods for plotting and summarising
@@ -33,13 +37,11 @@ all the complexity of lambda calibration, design space exploration, and
 result compilation.
 }
 \examples{
-design <- parallel_crt(
-  icc = 0.05, delta = 0.25,
-  k1 = c(8, 10, 12), m1 = seq(10, 50, by = 10),
-  k2 = 0:4, rho = 30
-)
-results <- adaptive_analysis(design, target_power = 0.8)
-summary(results)
-plot(results, type = "EN")
-
+\donttest{
+design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+                       k2 = 0:2, m2 = c(20, 30), rho = 30)
+planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+                             method = "lambda", verbose = FALSE)
+print(planned)
+}
 }

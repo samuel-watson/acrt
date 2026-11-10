@@ -29,29 +29,25 @@ extract_cost_params <- function(design) {
 #' all the complexity of lambda calibration, design space exploration, and
 #' result compilation.
 #'
-#' @param design A crt_design object created by parallel_crt(), crossover_crt(), etc.
+#' @param design A crt_design object, for example from parallel_crt()
 #' @param target_power Target overall power (default 0.8)
 #' @param explore If TRUE and stage1_grid has multiple rows, explore all designs.
 #'        If FALSE, only analyse the first stage 1 design.
 #' @param verbose Print progress messages
-#' @param ... Additional arguments passed to find_lambda_for_power
+#' @param futility Whether the futility boundary is treated as "nonbinding"
+#'   (the default) or "binding" when calibrating the final boundary.
+#' @param ... Additional arguments passed to [find_lambda_for_power()]
 #'
 #' @return An adaptive_results object with methods for plotting and summarising
 #'
 #' @examples
-#'
-#' design <- parallel_crt(
-#'  icc = 0.05,           # Intra-cluster correlation
-#'  cac = 0.8,            # Cluster autocorrelation
-#'  delta = 0.25,         # Treatment effect
-#'  k1 = c(12:16),    # Stage 1 clusters per arm (explore these)
-#'  m1 = seq(10, 50, 5), # Stage 1 individuals per cluster
-#'  k2 = 0:4,             # Stage 2 new clusters (search space)
-#'  rho = 30              # Cluster-to-individual cost ratio
-#' )
-#'
-#' results <- adaptive_analysis(design, target_power = 0.8,
-#'                             verbose = TRUE, tol = 0.01, method = "cost_cap")
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+#'                        k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' print(planned)
+#' }
 #' @export
 adaptive_analysis <- function(design, target_power = 0.8,
                               explore = TRUE, verbose = TRUE,
@@ -138,7 +134,7 @@ adaptive_analysis.crt_design <- function(design, target_power = 0.8,
 }
 
 #' Add sample size metrics to exploration results (fallback)
-#' @keywords internal
+#' @noRd
 add_sample_size_metrics <- function(exploration, sample_size_fn) {
 
   for (i in seq_len(nrow(exploration$summary))) {
@@ -210,7 +206,7 @@ summary.adaptive_results <- function(object, ...) {
 
     # Select key columns
     key_cols <- c(
-      names(object$design$spec$stage1_params),
+      object$design$spec$stage1_params,
       "converged", "power", "power_stage1", "lambda",
       "E_N", "N_max", "E_cost", "max_cost",
       "prob_efficacy", "prob_futility", "prob_continue"
@@ -262,26 +258,16 @@ summary.adaptive_results <- function(object, ...) {
 #' objectives. The argument should be a list with the name of the variable and
 #' either 'min' and 'max', for example `list(E_cost = "min", max_cost = "min")`
 #' @param design_index If decision rules is the type then which design to show
+#' @param ... Further arguments passed to the plotting function
+#' @return A ggplot object, or a patchwork or list of plots for combined panels.
 #' @examples
-#' # Define the design in ONE call - no custom functions needed!
-#' design <- parallel_crt(
-#'  icc = 0.05,           # Intra-cluster correlation
-#'  cac = 0.8,            # Cluster autocorrelation
-#'  delta = 0.25,         # Treatment effect
-#'  k1 = c(12:16),    # Stage 1 clusters per arm (explore these)
-#'  m1 = seq(10, 50, 5), # Stage 1 individuals per cluster
-#'  k2 = 0:4,             # Stage 2 new clusters (search space)
-#'  rho = 30              # Cluster-to-individual cost ratio
-#')
-#'
-#' # Run the analysis - ONE function call
-#' results <- adaptive_analysis(design, target_power = 0.8,
-#'                             verbose = TRUE, tol = 0.01, method = "cost_cap")
-#' # Plot results
-#' p1 <- plot(results, type = "EN")      # Expected sample size
-#' p2 <- plot(results, type = "Nmax")    # Maximum sample size
-#' p3 <- plot(results, type = "pareto", objectives = list(E_cost = "min", max_cost = "min") )
-#'
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 12:13,
+#'                        m1 = c(30, 40), k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' results <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' plot(results, type = "EN")
+#' }
 #' @export
 plot.adaptive_results <- function(x, type = c("EN", "Nmax", "power", "probabilities",
                                               "decision", "pareto", "all"),
@@ -334,20 +320,13 @@ plot.adaptive_results <- function(x, type = c("EN", "Nmax", "power", "probabilit
 #'
 #' @return A data frame of Pareto-optimal designs
 #' @examples
-#' design <- parallel_crt(
-#'  icc = 0.05,           # Intra-cluster correlation
-#'  cac = 0.8,            # Cluster autocorrelation
-#'  delta = 0.25,         # Treatment effect
-#'  k1 = c(12:16),    # Stage 1 clusters per arm (explore these)
-#'  m1 = seq(10, 50, 5), # Stage 1 individuals per cluster
-#'  k2 = 0:4,             # Stage 2 new clusters (search space)
-#'  rho = 30              # Cluster-to-individual cost ratio
-#'  )
-#'
-#'  # Run the analysis - ONE function call
-#'  results <- adaptive_analysis(design, target_power = 0.8,
-#'                               verbose = TRUE, tol = 0.01, method = "cost_cap")
-#'  pareto <- find_pareto(results, objectives = list(E_cost = "min", max_cost = "min"))
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 12:13,
+#'                        m1 = c(30, 40), k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' results <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' find_pareto(results, objectives = list(E_N = "min", N_max = "min"))
+#' }
 #' @export
 find_pareto <- function(results,
                         objectives = list(E_N = "min", N_max = "min"),
@@ -378,6 +357,14 @@ find_pareto <- function(results,
 #' @param verbose Print progress
 #'
 #' @return A comparison object with comparison metrics
+#' @examples
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+#'                        k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' compare_to_fixed(planned, verbose = FALSE)
+#' }
 #' @export
 compare_to_fixed <- function(results,
                              fixed_grid = NULL,
@@ -420,7 +407,7 @@ compare_to_fixed <- function(results,
   if (is.null(fixed_cost_fn)) {
     fixed_cost_fn <- fixed_defaults$cost_fn
     if (is.null(fixed_cost_fn)) {
-      fixed_cost_fn <- function(model_output, rho) {
+      fixed_cost_fn <- function(model_output, ...) {
         model_output$total_cost %||% model_output$n_total %||% 0
       }
     }
@@ -544,7 +531,7 @@ compare_to_fixed <- function(results,
 }
 
 #' Get default fixed design configuration for a design type
-#' @keywords internal
+#' @noRd
 get_fixed_design_defaults <- function(design, target_power) {
 
   spec <- design$spec
@@ -568,7 +555,7 @@ get_fixed_design_defaults <- function(design, target_power) {
 
     model_fn <- fixed_parallel_model_builder
 
-    cost_fn <- function(model_output, rho) {
+    cost_fn <- function(model_output, rho, ...) {
       n_cost <- model_output$n_total
       k_cost <- model_output$k * 2
       n_cost + rho * k_cost
@@ -589,12 +576,34 @@ get_fixed_design_defaults <- function(design, target_power) {
 
     model_fn <- fixed_crossover_model_builder
 
-    cost_fn <- function(model_output, rho) {
+    cost_fn <- function(model_output, rho, ...) {
       n_cost <- model_output$n_total
-      k_cost <- model_output$n_clusters
+      k_cost <- model_output$k * 2
       n_cost + rho * k_cost
     }
-    } else {
+
+  } else if (spec$design_type == "stepped_wedge") {
+    # Stepped-wedge: K is typically fixed, vary T (total periods) and possibly m
+    K <- unique(stage1_grid$K)[1]
+    t1_vals <- unique(stage1_grid$t1)
+    m_val <- unique(stage1_grid$m)[1]
+
+    # The "fixed" comparison is a complete stepped wedge with no interim
+    grid <- expand.grid(
+      K = K,
+      T_total = seq(max(t1_vals), max(t1_vals) * 3, by = 1),
+      m = m_val
+    )
+
+    model_fn <- fixed_stepped_wedge_model_builder
+
+    cost_fn <- function(model_output, rho, ...) {
+      n_cost <- model_output$n_total
+      t_cost <- model_output$T_total
+      n_cost + rho * t_cost
+    }
+
+  } else {
     # Unknown design type - return NULL, user must provide
     return(list(
       grid = NULL,
@@ -611,7 +620,7 @@ get_fixed_design_defaults <- function(design, target_power) {
 }
 
 #' Helper to add sample size metrics to summary df
-#' @keywords internal
+#' @noRd
 add_sample_size_metrics_to_df <- function(df, results) {
   for (i in seq_len(nrow(df))) {
     if (!is.null(results$raw$results[[i]]$results)) {
@@ -720,7 +729,7 @@ plot.adaptive_comparison <- function(x, type = c("cost_ratio", "savings", "front
 }
 
 #' Plot comparison for multiple adaptive designs
-#' @keywords internal
+#' @noRd
 plot_comparison_multi <- function(x, type = c("cost_ratio", "savings", "frontier", "all")) {
 
   type <- match.arg(type)
@@ -888,6 +897,14 @@ plot_comparison_multi <- function(x, type = c("cost_ratio", "savings", "frontier
 #' @param hypothesis "H1" or "H0"
 #'
 #' @return A sample size summary object
+#' @examples
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+#'                        k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' get_sample_size(planned)$summary
+#' }
 #' @export
 get_sample_size <- function(results, design_index = 1, hypothesis = "H1") {
 
@@ -919,6 +936,14 @@ get_sample_size <- function(results, design_index = 1, hypothesis = "H1") {
 #' @param z1_values Optional specific z1 values to evaluate
 #'
 #' @return Data frame of decision rules
+#' @examples
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+#'                        k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' head(get_decision_rules(planned))
+#' }
 #' @export
 get_decision_rules <- function(results, design_index = 1, z1_values = NULL) {
 
@@ -963,6 +988,15 @@ get_decision_rules <- function(results, design_index = 1, z1_values = NULL) {
 #' @param override_stop Generates the stage 2 trial design for recommended stops
 #'
 #' @return An interim_result object with recommendation and conditional power
+#' @examples
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+#'                        k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' interim_analysis(planned, z1_obs = 1.5, theta_hat = list(icc = 0.03),
+#'                  verbose = FALSE)
+#' }
 #' @export
 interim_analysis <- function(planned, z1_obs, theta_hat = list(),
                              delta = NULL, recalibrate = TRUE,
@@ -986,7 +1020,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   r <- planned$raw
   w1_ref <- r$results$params$w1_ref
   efficacy_boundary <- r$results$params$efficacy_boundary
-  t_crit <- r$results$params$t_crit %||% 1.96
+  t_crit <- r$results$params$t_crit_s1 %||% qnorm(0.975)
   c2 <- r$results$params$c2 %||%
     calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
   futility_boundary <- r$results$params$futility_boundary %||% -Inf
@@ -1115,8 +1149,7 @@ interim_analysis <- function(planned, z1_obs, theta_hat = list(),
   }
 
   # --- Step 4: Compute CP for each design ---
-  model_list <- precompute_models(design_grid, model_fn, fixed_params,
-                                  parallel = FALSE, n_cores = NULL)
+  model_list <- precompute_models(design_grid, model_fn, fixed_params)
 
   n_designs <- length(model_list)
   w2_ref <- sqrt(1 - w1_ref^2)
@@ -1311,12 +1344,22 @@ print.interim_result <- function(x, ...) {
 #' @param scenarios Named list of scenarios, each a named list of parameter values
 #'   e.g. list("ICC = 0.03" = list(icc = 0.03), "ICC = 0.05" = list(icc = 0.05))
 #' @param delta Treatment effect for CP (NULL = use planned)
-#' @param z1_range Range of z1 values to evaluate
+#' @param z1_range Range of z1 values to evaluate. Defaults to the planned stage 1 mean plus or minus 8.
 #' @param n_z1 Number of z1 points
-#' @param type What to plot: "cost", "cp", "design", "all"
-#' @param show_density Overlay density of z1 under H1
+#' @param include_planned Whether to include the planned design as a scenario
+#' @param target_power Target power used when recalibrating each scenario
 #'
-#' @return A ggplot or list of ggplots
+#' @return An `interim_sensitivity` object, with a `plot()` method.
+#' @examples
+#' \donttest{
+#' design <- parallel_crt(icc = 0.05, cac = 0.8, delta = 0.25, k1 = 14, m1 = 30,
+#'                        k2 = 0:2, m2 = c(20, 30), rho = 30)
+#' planned <- adaptive_analysis(design, target_power = 0.8, tol = 0.02,
+#'                              method = "lambda", verbose = FALSE)
+#' sens <- interim_sensitivity(planned, scenarios = list(low = list(icc = 0.03)),
+#'                             n_z1 = 50)
+#' plot(sens, type = "cp")
+#' }
 #' @export
 interim_sensitivity <- function(planned,
                                 scenarios,
@@ -1339,7 +1382,7 @@ interim_sensitivity <- function(planned,
   w1_ref <- r$results$params$w1_ref
   w2_ref <- sqrt(1 - w1_ref^2)
   efficacy_boundary <- r$results$params$efficacy_boundary
-  t_crit <- r$results$params$t_crit %||% 1.96
+  t_crit <- r$results$params$t_crit_s1 %||% qnorm(0.975)
   c2 <- r$results$params$c2 %||%
     calibrate_c2(w1_ref, efficacy_boundary, alpha = 0.05)
   b1_planned <- r$results$params$b1
@@ -1348,8 +1391,8 @@ interim_sensitivity <- function(planned,
   cost_params_full <- r$results$params$cost_params %||% list(rho = rho)
   if (is.null(delta)) delta <- b1_planned
 
+  if (is.null(z1_range)) z1_range <- mu1_planned + c(-8, 8)
   z1_grid <- seq(z1_range[1], z1_range[2], length.out = n_z1)
-  dz <- diff(z1_grid[1:2])
 
   # Stage 1 params
   s1 <- design$stage1_grid[1, , drop = FALSE]
@@ -1358,7 +1401,6 @@ interim_sensitivity <- function(planned,
   cost_fn_total <- generate_cost_fn(spec, "total")
   resource_vars <- spec$stage2_params
   # === Include planned design as a scenario (no recalibration) ===
-  recalibrate <- TRUE
   planned_result <- NULL
 
   if (include_planned && !is.null(r$results)) {
@@ -1404,170 +1446,55 @@ interim_sensitivity <- function(planned,
     # Recompute models under this scenario
     model_fn <- generate_model_factory(spec)()
 
-    if (recalibrate) {
-      # Re-run full optimisation with locked weights
-      recal <- find_lambda_for_power(
-        target_power = target_power,
-        design_grid = design_grid,
-        model_fn = model_fn,
-        fixed_params = fixed_params,
-        cost_fn = cost_fn,
-        cost_params = extract_cost_params(design),
-        resource_vars = resource_vars,
-        method = method,
-        z1_range = z1_range,
-        n_quad = n_z1,
-        verbose = FALSE,
-        w1_override = w1_ref,
-        efficacy_override = efficacy_boundary,
-        t_crit_override = t_crit,
-        c2_override = c2
-      )
+    # Re-run full optimisation with locked weights
+    recal <- find_lambda_for_power(
+      target_power = target_power,
+      design_grid = design_grid,
+      model_fn = model_fn,
+      fixed_params = fixed_params,
+      cost_fn = cost_fn,
+      cost_params = extract_cost_params(design),
+      resource_vars = resource_vars,
+      method = method,
+      z1_range = z1_range,
+      n_quad = n_z1,
+      verbose = FALSE,
+      w1_override = w1_ref,
+      efficacy_override = efficacy_boundary,
+      t_crit_override = t_crit,
+      c2_override = c2
+    )
 
-      # The results are already in plot_decision_rules-compatible format
-      raw_compatible <- recal$results
+    # The results are already in plot_decision_rules-compatible format
+    raw_compatible <- recal$results
 
-      # Build decisions data frame from optimal_designs
-      opt <- recal$results$quadrature$optimal_designs
+    # Build decisions data frame from optimal_designs
+    opt <- recal$results$quadrature$optimal_designs
 
-      # Compute total cost (stage 1 + stage 2)
-      ms <- recal$results$models$summaries
-      mod1 <- recal$results$models$list[[1]]
-      cost_params_full <- extract_cost_params(design)
-      cost_s1 <- do.call(cost_fn_total, c(list(mod1), cost_params_full)) -
-        do.call(cost_fn, c(list(mod1), cost_params_full))
+    # Compute total cost (stage 1 + stage 2)
+    ms <- recal$results$models$summaries
+    mod1 <- recal$results$models$list[[1]]
+    cost_params_full <- extract_cost_params(design)
+    cost_s1 <- do.call(cost_fn_total, c(list(mod1), cost_params_full)) -
+      do.call(cost_fn, c(list(mod1), cost_params_full))
 
-      opt$cost <- NA_real_
-      cont <- which(opt$continue)
-      opt$cost[cont] <- cost_s1 + ms$raw_cost[opt$design_idx[cont]]
-      # Stopped trials still incur stage 1 cost
-      opt$cost[!opt$continue] <- cost_s1
-      raw_compatible <- recal$results
-      raw_compatible$quadrature$optimal_designs <- opt
-      list(
-        scenario = sc_name,
-        theta = theta_hat,
-        optimal_designs = opt,
-        raw_compatible = raw_compatible,
-        lambda = recal$lambda,
-        cost_cap = recal$cost_cap,
-        power = recal$power,
-        converged = recal$converged
-      )
-
-    } else {
-      # Original behaviour: use planned lambda, just recompute models
-      model_list <- precompute_models(design_grid, model_fn, fixed_params,
-                                      parallel = FALSE, n_cores = NULL)
-
-      n_designs <- length(model_list)
-      I2_vec <- sapply(model_list, function(d) d$I2_eff)
-      cost_vec <- sapply(model_list, function(d) do.call(cost_fn, c(list(d), list(rho = rho))))
-
-      I1_eff_scenario <- model_list[[1]]$I1_eff
-      mu1_scenario <- delta * sqrt(I1_eff_scenario)
-
-      mod1 <- model_list[[1]]
-      cost_params_full <- extract_cost_params(design)
-      cost_s1 <- do.call(cost_fn_total, c(list(mod1), cost_params_full)) -
-        do.call(cost_fn, c(list(mod1), cost_params_full))
-
-      # CP matrix: n_z1 x n_designs
-      cp_mat <- sapply(seq_len(n_designs), function(j) {
-        ncp <- delta * sqrt(I2_vec[j])
-        upper <- (c2 - w1_ref * z1_grid) / w2_ref
-        lower <- (-c2 - w1_ref * z1_grid) / w2_ref
-        pnorm(ncp - upper) + pnorm(lower - ncp)
-      })
-
-      # Apply decision criterion
-      if (method == "cost_cap") {
-        cost_cap <- r$cost_cap
-        feasible <- cost_vec <= cost_cap
-        cp_mat_feas <- cp_mat
-        cp_mat_feas[, !feasible] <- -Inf
-        best_idx <- max.col(cp_mat_feas)
-        best_cp <- cp_mat[cbind(seq_along(z1_grid), best_idx)]
-        futility <- best_cp < 1e-6
-      } else {
-        lambda <- r$lambda
-        criterion_mat <- cp_mat - matrix(lambda * cost_vec,
-                                         nrow = n_z1, ncol = n_designs,
-                                         byrow = TRUE)
-        best_idx <- max.col(criterion_mat)
-        best_criterion <- criterion_mat[cbind(seq_along(z1_grid), best_idx)]
-        best_cp <- cp_mat[cbind(seq_along(z1_grid), best_idx)]
-        futility <- best_criterion < 0
-      }
-
-      efficacy <- abs(z1_grid) > efficacy_boundary
-      continue <- !efficacy & !futility
-
-      best_cost_s2 <- cost_vec[best_idx]
-      best_cost_total <- cost_s1 + best_cost_s2
-
-      opt <- data.frame(
-        z1 = z1_grid,
-        efficacy_stop = efficacy,
-        futility_stop = futility,
-        continue = continue,
-        cp = ifelse(continue, best_cp, ifelse(efficacy, 1, 0)),
-        cost = ifelse(continue, best_cost_total, cost_s1),
-        design_idx = ifelse(continue, best_idx, NA)
-      )
-
-      for (col in names(design_grid)) {
-        opt[[col]] <- ifelse(continue, design_grid[[col]][best_idx], NA)
-      }
-      for (var in resource_vars) {
-        vals <- sapply(model_list, function(d) d[[var]] %||% NA)
-        opt[[var]] <- ifelse(continue, vals[best_idx], NA)
-      }
-
-      # Quadrature weights and power
-      weights <- dnorm(z1_grid, mean = mu1_scenario) * dz
-      p_eff <- sum(weights[efficacy])
-      p_fut <- sum(weights[futility])
-      p_cont <- sum(weights[continue])
-      power_s2 <- sum(weights[continue] * opt$cp[continue])
-      upper_tail <- pnorm(max(z1_grid), mean = mu1_scenario, lower.tail = FALSE)
-      total_power <- p_eff + power_s2 + upper_tail
-
-      raw_compatible <- list(
-        quadrature = list(
-          optimal_designs = opt,
-          weights = weights
-        ),
-        models = list(
-          design_grid = design_grid
-        ),
-        params = list(
-          mu1 = mu1_scenario,
-          w1_ref = w1_ref,
-          efficacy_boundary = efficacy_boundary,
-          t_crit = t_crit,
-          c2 = c2,
-          b1 = delta
-        ),
-        power = total_power,
-        probabilities = list(
-          efficacy_stop = p_eff,
-          futility_stop = p_fut,
-          continue = p_cont
-        )
-      )
-
-      list(
-        scenario = sc_name,
-        theta = theta_hat,
-        optimal_designs = opt,
-        raw_compatible = raw_compatible,
-        lambda = if (method == "lambda") r$lambda else NA,
-        cost_cap = if (method == "cost_cap") r$cost_cap else NA,
-        power = total_power,
-        converged = TRUE
-      )
-    }
+    opt$cost <- NA_real_
+    cont <- which(opt$continue)
+    opt$cost[cont] <- cost_s1 + ms$raw_cost[opt$design_idx[cont]]
+    # Stopped trials still incur stage 1 cost
+    opt$cost[!opt$continue] <- cost_s1
+    raw_compatible <- recal$results
+    raw_compatible$quadrature$optimal_designs <- opt
+    list(
+      scenario = sc_name,
+      theta = theta_hat,
+      optimal_designs = opt,
+      raw_compatible = raw_compatible,
+      lambda = recal$lambda,
+      cost_cap = recal$cost_cap,
+      power = recal$power,
+      converged = recal$converged
+    )
   })
   names(scenario_results) <- names(scenarios)
 
@@ -1610,7 +1537,7 @@ interim_sensitivity <- function(planned,
       design_grid = design_grid,
       resource_vars = resource_vars,
       z1_grid = z1_grid,
-      recalibrate = recalibrate,
+      recalibrate = TRUE,
       target_power = target_power
     ),
     class = "interim_sensitivity"

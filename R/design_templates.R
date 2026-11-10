@@ -11,6 +11,8 @@
 #' @param icc Intra-cluster correlation on natural scale
 #' @param cac Cluster autocorrelation (if applicable)
 #' @return List with beta, covariance, family object, and scale info
+#' @examples
+#' convert_to_glm_scale("binomial", baseline = 0.3, delta = -0.1, icc = 0.05, cac = 0.8)
 #' @export
 convert_to_glm_scale <- function(family = c("gaussian", "binomial", "poisson"),
                                  baseline = 0,
@@ -64,7 +66,7 @@ convert_to_glm_scale <- function(family = c("gaussian", "binomial", "poisson"),
     v_prob <- baseline * (1 - baseline)  # variance on prob scale
     v_between_prob <- v_prob * (icc / (1 - icc))  # between-cluster variance on prob scale
 
-    # Delta method: Var(logit(p)) ≈ Var(p) / (p(1-p))^2
+    # Delta method: Var(logit(p)) approx. Var(p) / (p(1-p))^2
     deriv <- 1 / (baseline * (1 - baseline))  # derivative of logit at baseline
     tau_sq <- v_between_prob * deriv^2
 
@@ -104,7 +106,7 @@ convert_to_glm_scale <- function(family = c("gaussian", "binomial", "poisson"),
 
     # Convert ICC to variance on log scale
     # For Poisson, variance = mean, so ICC relates to overdispersion
-    # Var(log(Y)) ≈ 1/mu for Poisson
+    # Var(log(Y)) approx. 1/mu for Poisson
     # Between-cluster variance on log scale
     v_log <- 1 / baseline  # approximate variance of log(Y)
     v_between_log <- v_log * (icc / (1 - icc))
@@ -151,6 +153,9 @@ convert_to_glm_scale <- function(family = c("gaussian", "binomial", "poisson"),
 #' @param baseline Baseline outcome (required for binomial/poisson)
 #'
 #' @return A crt_design object
+#' @examples
+#' design <- parallel_crt(icc = 0.05, delta = 0.25, k1 = 14, m1 = 30, k2 = 0:2, rho = 30)
+#' design$stage1_grid
 #' @export
 parallel_crt <- function(icc, delta, k1, m1,
                          k2 = 0:4, m2 = NULL,
@@ -237,7 +242,7 @@ parallel_crt <- function(icc, delta, k1, m1,
 }
 
 #' Model builder for parallel CRT (internal)
-#' @keywords internal
+#' @noRd
 parallel_model_builder <- function(design_params, fixed_params) {
 
   k1 <- fixed_params$k1
@@ -286,8 +291,9 @@ parallel_model_builder <- function(design_params, fixed_params) {
     df <- rbind(df1, df2)
   }
 
-  # Cache key includes family
-  cache_key <- paste(k1, k2, family, sep = "_")
+  # glmmrBase has no public setter for weights, trials or offsets, so the model
+  # is rebuilt whenever the cluster sizes change.
+  cache_key <- paste(k1, k2, m1, m2, m2b, family, sep = "_")
 
   # Build or update model
   if (is.null(cache$mod) || cache$cache_key != cache_key) {
@@ -327,14 +333,7 @@ parallel_model_builder <- function(design_params, fixed_params) {
     cache$cache_key <- cache_key
 
   } else {
-    # Update existing model
-    if (family == "gaussian") {
-      glmmrBase:::Model__set_weights(cache$mod$.__enclos_env__$private$ptr, df$n)
-    } else if (family == "binomial") {
-      glmmrBase:::Model__set_trials(cache$mod$.__enclos_env__$private$ptr, as.integer(df$n))
-    } else if (family == "poisson") {
-      glmmrBase:::Model__set_offset(cache$mod$.__enclos_env__$private$ptr, log(df$n))
-    }
+    # Same design, so only the covariance parameters can differ
     cache$mod$update_parameters(cov.pars = glm_params$cov_pars)
   }
 
@@ -392,7 +391,7 @@ parallel_model_builder <- function(design_params, fixed_params) {
 
 
 #' Fixed parallel model builder (for comparison)
-#' @keywords internal
+#' @noRd
 fixed_parallel_model_builder <- function(design_params, fixed_params) {
 
   k <- design_params$k
@@ -491,5 +490,3 @@ fixed_parallel_model_builder <- function(design_params, fixed_params) {
 }
 
 
-# Null coalescing
-`%||%` <- function(x, y) if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x

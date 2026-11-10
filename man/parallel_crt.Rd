@@ -59,3 +59,7 @@ A crt_design object
 Two-arm parallel design where clusters are randomised to treatment or control.
 Stage 2 can add more observations and/or clusters.
 }
+\examples{
+design <- parallel_crt(icc = 0.05, delta = 0.25, k1 = 14, m1 = 30, k2 = 0:2, rho = 30)
+design$stage1_grid
+}

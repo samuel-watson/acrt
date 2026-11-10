@@ -20,12 +20,12 @@ crt_design_spec(
 \item{stage2_params}{Character vector of stage 2 parameter names}
 
 \item{resources}{Named list of formulas for resource calculation.
-Names should follow convention: {resource_type}_{stage}
+Names should follow the convention resource_stage,
 e.g., n_s1, n_s2, clusters_s1, clusters_s2, periods_s2}
 
 \item{cost_structure}{Named list defining cost components:
 - weights: named vector of cost weights (can reference 'rho')
-- stage2_only: which resources are stage 2 only (for λ-calibration)}
+- stage2_only: which resources are stage 2 only (for lambda-calibration)}
 
 \item{model_builder}{Function to build the statistical model}
 
@@ -38,4 +38,12 @@ A crt_design_spec object
 }
 \description{
 Create a CRT design specification
+}
+\examples{
+crt_design_spec(
+  stage1_params = c("k1", "m1"),
+  stage2_params = "m2",
+  resources = list(n_s1 = ~ n_arms * k1 * m1, n_s2 = ~ n_arms * k1 * m2),
+  model_builder = function(design_params, fixed_params) list()
+)
 }
