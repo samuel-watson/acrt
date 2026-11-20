@@ -2,7 +2,7 @@
 # Package documentation, imports and start-up
 # =============================================================================
 
-#' acrt: Adaptive Cluster Randomised Trial Design and Analysis
+#' aadaptiveCRT: Adaptive Cluster Randomised Trial Design and Analysis
 #'
 #' Tools for designing and analysing two-stage adaptive cluster randomised
 #' trials using a combination test of stage-wise efficient scores.

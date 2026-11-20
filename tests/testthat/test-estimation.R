@@ -109,9 +109,9 @@ test_that("the gaussian posterior matches a fine grid", {
   Y <- M * (ETA + rnorm(4 * n, 0, 0.3))
   fam <- list(linkinv = identity,
               loglik = function(H, y, m) -0.5 * m * (y / m - H)^2 / 0.9)
-  exact <- acrt:::.posterior_mean_gaussian(Y, M, ETA, obs, 0.1, 0.7, 0.9)
-  grid <- acrt:::.posterior_grid(0.1, 0.7, list(span = 7, grid_min = 1500L))
-  expect_equal(exact, acrt:::.posterior_mean_grid(fam, Y, M, ETA, obs, grid),
+  exact <- adaptiveCRT:::.posterior_mean_gaussian(Y, M, ETA, obs, 0.1, 0.7, 0.9)
+  grid <- adaptiveCRT:::.posterior_grid(0.1, 0.7, list(span = 7, grid_min = 1500L))
+  expect_equal(exact, adaptiveCRT:::.posterior_mean_grid(fam, Y, M, ETA, obs, grid),
                tolerance = 1e-6)
 })
 
@@ -170,16 +170,16 @@ test_that("clusters added at stage 2 have no stage 1 contribution", {
 })
 
 test_that("the grid is refined for very informative cluster-periods", {
-  fam <- acrt:::.estimation_family("poisson")
-  plan <- list(fam = fam, control = acrt:::.estimation_control(list()))
+  fam <- adaptiveCRT:::.estimation_family("poisson")
+  plan <- list(fam = fam, control = adaptiveCRT:::.estimation_control(list()))
   nuis <- list(A = 0.09, cac = 0.7,
-               grid = acrt:::.posterior_grid(0.09, 0.7, plan$control))
+               grid = adaptiveCRT:::.posterior_grid(0.09, 0.7, plan$control))
   small <- list(Y = matrix(10, 2, 2), M = matrix(50, 2, 2),
                 obs = matrix(TRUE, 2, 2))
   large <- list(Y = matrix(5000, 2, 2), M = matrix(20000, 2, 2),
                 obs = matrix(TRUE, 2, 2))
-  expect_length(acrt:::.resolve_grid(plan, nuis, small)$b, 80)
-  expect_gt(length(acrt:::.resolve_grid(plan, nuis, large)$b), 80)
+  expect_length(adaptiveCRT:::.resolve_grid(plan, nuis, small)$b, 80)
+  expect_gt(length(adaptiveCRT:::.resolve_grid(plan, nuis, large)$b), 80)
 })
 
 test_that("bad input is rejected", {
@@ -243,7 +243,7 @@ test_that("period effects are recovered and match the statistics at beta = 0", {
     expect_equal(s$z1, int$z1, tolerance = 1e-10)
     expect_equal(s$Z, fin$Z, tolerance = 1e-10)
 
-    pars <- acrt:::.linear_pars(plan, int$nuis, 0.3, fin$data, fin$design$Tn)
+    pars <- adaptiveCRT:::.linear_pars(plan, int$nuis, 0.3, fin$data, fin$design$Tn)
     expect_equal(pars$gamma[1], 0)
     expect_lt(max(abs(pars$gamma - seq(0, 1, length.out = 6))), 0.35)
   }

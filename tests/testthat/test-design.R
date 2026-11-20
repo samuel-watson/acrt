@@ -52,7 +52,7 @@ test_that("a stored parallel model gives the same information as a fresh one", {
 test_that("the probability reshaping keeps every row and value", {
   df <- data.frame(k1 = 1:2, prob_efficacy = c(0.1, 0.2), prob_futility = c(0.3, 0.4),
                    prob_continue = c(0.6, 0.4))
-  long <- acrt:::.stack_probabilities(df)
+  long <- adaptiveCRT:::.stack_probabilities(df)
   expect_equal(nrow(long), 6)
   expect_equal(long$probability[long$outcome == "futility" & long$k1 == 2], 0.4)
 })

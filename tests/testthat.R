@@ -1,4 +1,4 @@
 library(testthat)
-library(acrt)
+library(adaptiveCRT)
 
-test_check("acrt")
+test_check("adaptiveCRT")
