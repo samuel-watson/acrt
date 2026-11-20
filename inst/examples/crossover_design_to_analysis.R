@@ -225,6 +225,11 @@ crossover_model_builder <- function(design_params, fixed_params) {
                  rep(0, n_periods - 1),         # Time effects
                  glm_params$beta[2]         )   # Treatment
 
+  # gr(cl)*ar0(t) takes (variance, AR parameter). convert_to_glm_scale()
+  # returns the nested-exchangeable split (tau2*cac, tau2*(1-cac)), so
+  # recombine it once and use it for every family and on cache hits.
+  cov_ar <- c(sum(glm_params$cov_pars), cac)
+
   # Cache key includes family
   cache_key <- paste(k1, k2, t2, family, sep = "_")
   if (is.null(cache$mod) || cache$cache_key != cache_key) {
@@ -235,7 +240,7 @@ crossover_model_builder <- function(design_params, fixed_params) {
         data = df,
         family = glm_params$family,
         mean = beta_full,
-        covariance = glm_params$cov_pars,
+        covariance = cov_ar,
         weights = df$n,
         var_par = glm_params$var_par
       )
@@ -245,7 +250,7 @@ crossover_model_builder <- function(design_params, fixed_params) {
         data = df,
         family = glm_params$family,
         mean = beta_full,
-        covariance =  c(glm_params$cov_pars[1]/cac, cac),
+        covariance = cov_ar,
         trials = df$n
       )
     } else if (family == "poisson") {
@@ -254,7 +259,7 @@ crossover_model_builder <- function(design_params, fixed_params) {
         data = df,
         family = glm_params$family,
         mean = beta_full,
-        covariance = glm_params$cov_pars,
+        covariance = cov_ar,
         offset = log(df$n)
       )
     }
@@ -270,7 +275,7 @@ crossover_model_builder <- function(design_params, fixed_params) {
     } else if (family == "poisson") {
       glmmrBase:::Model__set_offset(cache$mod$.__enclos_env__$private$ptr, log(df$n))
     }
-    cache$mod$update_parameters(cov.pars = c(glm_params$cov_pars[1]/cac, cac), mean.pars = beta_full)
+    cache$mod$update_parameters(cov.pars = cov_ar, mean.pars = beta_full)
   }
   n1 <- nrow(df1)
   n2 <- nrow(df) - n1
@@ -293,8 +298,8 @@ crossover_model_builder <- function(design_params, fixed_params) {
   }
   eff_decomp <- efficient_score_decomposition(X, V, idx1, idx2, j = j_trt)
   # Degrees of freedom
-  n_cluster_periods_s1 <- 2 * k1 * 2  # 2 arms * k1 clusters * 2 periods
-  n_cluster_periods_full <- n_cluster_periods_s1 + t2 * 2 * (k1 + k2)  # + stage 2
+  n_cluster_periods_s1 <- nrow(df1)
+  n_cluster_periods_full <- nrow(df)
   n_fixed <- 1 + (n_periods - 1) + 1
 
   df_s1 <- n_cluster_periods_s1 - (1 + 1 + 1)  # Only 2 periods in stage 1, so fewer time effects
@@ -318,7 +323,7 @@ crossover_model_builder <- function(design_params, fixed_params) {
     k2 = k2,
     t2 = t2,
     df_s1 = df_s1,
-    df_s2 = t2 * 2 * (k1 + k2) - t2 - 1,
+    df_s2 = (nrow(df) - nrow(df1)) - (n_periods - 2) - 1,
     df_full = df_full,
     family = family,
     link = glm_params$link
@@ -347,11 +352,11 @@ crossover_crt <- function(icc, cac = 0.8, delta,
     stage2_params = c("k2", "m2", "t2"),
     resources = list(
       n_s1 = ~ n_arms * k1 * (m11 + m12),        # 2 periods in stage 1
-      n_s2 = ~ n_arms * k1 * m2 * t2 + n_arms * k2 * m2 * t2,  # existing + new clusters
+      n_s2 = ~ n_arms * k1 * m2 * t2 + n_arms * k2 * m2 * 2,  # new clusters run two periods
       clusters_s1 = ~ n_arms * k1,
       clusters_s2 = ~ n_arms * k2,
       t_s1 = ~ 2,
-      t_s2 = ~ t2
+      t_s2 = ~ max(t2, 2 * (k2 > 0))
     ),
     cost_structure = list(
       weights = c(n = 1, clusters = "rho", t = "rho_t"),

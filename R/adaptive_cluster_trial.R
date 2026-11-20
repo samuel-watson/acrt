@@ -400,13 +400,18 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
     cp_direction = cp_direction
   )
 
+  # Deterministic tie-break: cheapest design first, then grid order.
+  # (max.col's default ties.method = "random" draws on the RNG.)
+  by_cost <- order(model_summaries$raw_cost)
+
   if (is.null(cost_cap)) {
     # Original: lambda-penalised criterion
     criterion_mat <- cp_mat - matrix(model_summaries$cost,
                                      nrow = length(z1_vec),
                                      ncol = nrow(design_grid),
                                      byrow = TRUE)
-    best_idx <- max.col(criterion_mat)
+    best_idx <- by_cost[max.col(criterion_mat[, by_cost, drop = FALSE],
+                                ties.method = "first")]
     best_criterion <- criterion_mat[cbind(seq_along(z1_vec), best_idx)]
     best_cp <- cp_mat[cbind(seq_along(z1_vec), best_idx)]
     futility_criterion <- best_criterion < 0
@@ -424,7 +429,8 @@ find_optimal_designs <- function(z1_vec, design_grid, model_summaries,
     } else {
       cp_mat_feas <- cp_mat
       cp_mat_feas[, !feasible] <- -Inf
-      best_idx <- max.col(cp_mat_feas)
+      best_idx <- by_cost[max.col(cp_mat_feas[, by_cost, drop = FALSE],
+                                  ties.method = "first")]
       best_cp <- cp_mat[cbind(seq_along(z1_vec), best_idx)]
       best_criterion <- best_cp
       # No explicit futility - budget constraint does the work
